@@ -119,7 +119,7 @@ async def test_mcp_discovery_and_all_read_only_tools(keycloak_http):
             tool = tools[function.__name__]
             assert tool.annotations.readOnlyHint is True
             assert tool.annotations.destructiveHint is False
-            assert "token" not in tool.inputSchema["properties"]
+            assert "token" not in tool.input_schema["properties"]
 
         calls = [
             ("get_realm_info", {}),

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-import httpx
+import httpx2
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from cryptography.fernet import Fernet
 from fastmcp.server.auth import AccessToken, OAuthProxy
@@ -58,7 +58,7 @@ class KeycloakOAuthProxy(OAuthProxy):
         *,
         verify: ssl.SSLContext,
         timeout: int,
-        verification_client: httpx.AsyncClient,
+        verification_client: httpx2.AsyncClient,
         **kwargs,
     ):
         """Configure shared TLS trust and the upstream token-verification client."""
@@ -148,7 +148,7 @@ def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
     issuer = upstream + "/realms/" + quote(config.KEYCLOAK_REALM, safe="")
     oidc = issuer + "/protocol/openid-connect"
     verify = ssl.create_default_context(cafile=config.KEYCLOAK_CA_BUNDLE)
-    verification_client = httpx.AsyncClient(
+    verification_client = httpx2.AsyncClient(
         verify=verify, timeout=config.KEYCLOAK_TIMEOUT
     )
     verifier = KeycloakTokenVerifier(

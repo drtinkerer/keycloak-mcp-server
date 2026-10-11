@@ -24,6 +24,8 @@ This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-s
 
 ### Changed
 
+- FastMCP 4.1. Its token verifier uses `httpx2`, so the JWKS client in the OAuth
+  proxy now does too; `httpx2` is a declared dependency.
 - Tested on Python 3.12, 3.13 and 3.14.
 - CI actions moved to Node.js 24 releases; runner pinned to `ubuntu-24.04`.
 - Dependabot uses the `uv` ecosystem, so `uv.lock` is updated with `pyproject.toml`.

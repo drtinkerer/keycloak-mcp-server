@@ -163,9 +163,8 @@ def oauth_env(request, tmp_path, monkeypatch):
             kwargs.setdefault("transport", transport)
             original_client.__init__(self, *args, **kwargs)
 
-    network_client = NetworkClient
-
-    monkeypatch.setattr(auth_module.httpx, "AsyncClient", network_client)
+    # The Admin API is called through python-keycloak, which uses httpx.
+    monkeypatch.setattr(httpx, "AsyncClient", NetworkClient)
 
     # Authlib uses httpx2 when installed, with legacy httpx as its fallback.
     # Exercise the actual OAuth client in both dependency configurations.
@@ -195,8 +194,11 @@ def oauth_env(request, tmp_path, monkeypatch):
         )
 
     def mcp_client(token):
+        # fastmcp 4's client uses httpx2.
         def factory(**kwargs):
-            return original_client(transport=httpx.ASGITransport(app), **kwargs)
+            return original_oauth_client(
+                transport=oauth_http.ASGITransport(app), **kwargs
+            )
 
         return Client(
             StreamableHttpTransport(
