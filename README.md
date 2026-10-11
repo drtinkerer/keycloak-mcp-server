@@ -279,10 +279,29 @@ git commit -m "feat: your descriptive message"
 git push origin feat/your-feature
 ```
 
-## Acknowledgements
+## Credits
 
-Started from [redhat-data-and-ai/template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server)
-(Apache 2.0), a FastMCP server template. The Keycloak integration, OAuth proxy setup and tools are new.
+This project is built on
+[redhat-data-and-ai/template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server),
+a production-ready FastMCP server template from the `redhat-data-and-ai` GitHub
+organization, licensed under Apache 2.0. Thanks to its maintainers and contributors: the project structure,
+FastAPI/FastMCP application setup, Pydantic settings, structured logging, container
+build, OpenShift manifests, Makefile, CI workflows, pre-commit configuration and
+contributor docs all come from their work.
+
+### Changes from the template
+
+- **Removed** the example tools (multiply, code review prompt, logo), the template's
+  own OAuth server with PostgreSQL token storage, and their settings and tests.
+- **Added** Keycloak per-user authentication: the FastMCP OAuth proxy with
+  Keycloak-specific token verification for HTTP mode, and a built-in browser sign-in
+  (PKCE, loopback callback, token cache) for stdio mode.
+- **Added** twenty read-only Keycloak Admin API tools, run with the signed-in user's token.
+- **Updated** to FastMCP 4, uv with a committed lockfile, dependency ranges for
+  `uvx`/`pip` installs, and Python 3.12–3.14.
+- **Updated** the container, Compose and OpenShift manifests for Keycloak settings
+  and persistent OAuth state, and CI for Node 24 actions and PyPI trusted publishing.
+- **Renamed** the package to `keycloak_mcp_server` and rewrote the docs for Keycloak.
 
 ## License
 
