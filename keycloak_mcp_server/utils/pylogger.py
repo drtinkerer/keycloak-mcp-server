@@ -117,7 +117,7 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
     if not _LOGGING_CONFIGURED:
         logging.basicConfig(
             format="%(message)s",
-            stream=sys.stdout,
+            stream=sys.stderr,
             level=log_level,
         )
 
@@ -185,12 +185,12 @@ def get_uvicorn_log_config(log_level: str = "INFO") -> Dict[str, Any]:
             "default": {
                 "formatter": "default",
                 "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
+                "stream": "ext://sys.stderr",
             },
             "access": {
                 "formatter": "access",
                 "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
+                "stream": "ext://sys.stderr",
             },
         },
         "loggers": {

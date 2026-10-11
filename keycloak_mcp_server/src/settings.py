@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
@@ -13,7 +13,10 @@ logger = get_python_logger()
 
 # Load environment variables with error handling
 try:
-    load_dotenv()
+    # Search from the working directory: without usecwd, python-dotenv searches
+    # from this file's directory, which for an installed package (uvx, pip)
+    # is site-packages, so a .env next to the user would never be read.
+    load_dotenv(find_dotenv(usecwd=True))
 except Exception as e:
     # Log error but don't fail - environment variables might be set directly
     logger.warning(f"Could not load .env file: {e}")
@@ -40,6 +43,9 @@ class Settings(BaseSettings):
     KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS: List[str] = Field(
         default_factory=lambda: ["http://localhost:*/*", "http://127.0.0.1:*/*"]
     )
+    # stdio mode: the server signs the user in itself via this loopback callback.
+    KEYCLOAK_LOGIN_PORT: int = Field(default=8250, ge=1024, le=65535)
+    KEYCLOAK_TOKEN_CACHE_DIR: str = "~/.cache/keycloak-mcp-server"
 
     @model_validator(mode="after")
     def validate_keycloak_url(self) -> "Settings":
@@ -91,7 +97,7 @@ class Settings(BaseSettings):
             "env": "MCP_TRANSPORT_PROTOCOL",
             "description": "Transport protocol for the MCP server",
             "example": "streamable-http",
-            "enum": ["streamable-http", "sse", "http"],
+            "enum": ["streamable-http", "sse", "http", "stdio"],
         },
     )
     PYTHON_LOG_LEVEL: str = Field(
@@ -195,7 +201,7 @@ def validate_config(settings: Settings) -> None:
         )
 
     # Validate transport protocol
-    valid_transport_protocols = ["streamable-http", "sse", "http"]
+    valid_transport_protocols = ["streamable-http", "sse", "http", "stdio"]
     if settings.MCP_TRANSPORT_PROTOCOL not in valid_transport_protocols:
         raise ValueError(
             f"MCP_TRANSPORT_PROTOCOL must be one of {valid_transport_protocols}, got {settings.MCP_TRANSPORT_PROTOCOL}"

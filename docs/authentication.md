@@ -1,5 +1,13 @@
 # Browser OAuth with Keycloak
 
+Two modes, both using each user's own Keycloak token:
+
+- **stdio**: the MCP client launches the server (`uvx keycloak-mcp-server --stdio`) and
+  the server signs its one local user in through the browser itself (RFC 8252 native-app
+  flow: PKCE S256, random state, callback on `127.0.0.1`). Tokens are cached in a `0600`
+  file and refreshed. See the [README](../README.md#use-with-claude-code-stdio-no-server-to-run).
+- **HTTP** (the rest of this guide): one server for many users, through the FastMCP OAuth proxy.
+
 Codex, Claude Code, and the direct FastMCP client can authenticate users in their
 browser. The server uses FastMCP’s OAuth proxy and keeps each user’s Keycloak tokens
 separate. Configure the target and client once on the server; users provide their
@@ -47,7 +55,7 @@ Use client ID `keycloak-mcp`, display name `Keycloak MCP`:
 | PKCE method | S256 |
 | Refresh tokens | Enabled |
 | Implicit flow, direct access grants, service accounts | Disabled |
-| Valid redirect URI | `http://localhost:5001/auth/callback` |
+| Valid redirect URIs | `http://localhost:5001/auth/callback` (HTTP mode), `http://127.0.0.1:8250/callback` (stdio mode) |
 | Default client scopes | `profile`, `email`, `roles` |
 | Access-token audience mapper | `keycloak-mcp`, the client's own ID (access token only) |
 
@@ -66,7 +74,10 @@ resource "keycloak_openid_client" "keycloak_mcp" {
   pkce_code_challenge_method   = "S256"
   full_scope_allowed           = true
 
-  valid_redirect_uris = ["http://localhost:5001/auth/callback"]
+  valid_redirect_uris = [
+    "http://localhost:5001/auth/callback", # HTTP mode: the server's OAuth proxy
+    "http://127.0.0.1:8250/callback",      # stdio mode: the server signs you in itself
+  ]
 }
 
 # Put the client itself in `aud` so the server only accepts tokens minted for it.

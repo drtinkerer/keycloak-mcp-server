@@ -15,6 +15,7 @@ from keycloak.exceptions import (
     raise_error_from_response,
 )
 
+from keycloak_mcp_server.src.keycloak_api.local_login import LocalLogin
 from keycloak_mcp_server.src.settings import settings
 
 _user_access_token: ContextVar[str | None] = ContextVar(
@@ -119,6 +120,17 @@ class KeycloakService:
         raise ToolError(f"No client with clientId {client_id!r} in this realm.")
 
 
+_local_login: LocalLogin | None = None
+
+
+def get_local_login() -> LocalLogin:
+    """Return the process-wide stdio sign-in session (one local user)."""
+    global _local_login
+    if _local_login is None:
+        _local_login = LocalLogin(settings)
+    return _local_login
+
+
 @asynccontextmanager
 async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
     """Create an isolated SDK connection for a tool invocation."""
@@ -127,8 +139,12 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
             "Configure KEYCLOAK_SERVER_URL and KEYCLOAK_REALM before calling Keycloak tools."
         )
 
+    stdio = settings.MCP_TRANSPORT_PROTOCOL == "stdio"
     token: str | None
-    if settings.ENABLE_AUTH:
+    if stdio:
+        # The server runs as one local user, who signs in through the browser.
+        token = await get_local_login().access_token()
+    elif settings.ENABLE_AUTH:
         access = get_access_token()
         if access is None or not access.claims.get("keycloak_admin_token"):
             raise ToolError(
@@ -139,7 +155,7 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
         token = access.token
     else:
         token = _user_access_token.get()
-    if not token and settings.KEYCLOAK_DEV_ACCESS_TOKEN:
+    if not token and settings.KEYCLOAK_DEV_ACCESS_TOKEN and not stdio:
         if (
             settings.ENABLE_AUTH
             or settings.ENVIRONMENT != "development"
@@ -174,8 +190,14 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
         )
     except KeycloakError as exc:
         code = exc.response_code
+        if stdio and code == 401:
+            get_local_login().invalidate_access_token()
         messages: dict[int | None, str] = {
-            401: "Keycloak rejected the access token. Sign in again or supply a fresh development token.",
+            401: (
+                "Keycloak rejected the access token. Call the tool again to refresh it."
+                if stdio
+                else "Keycloak rejected the access token. Sign in again or supply a fresh development token."
+            ),
             403: "Your Keycloak identity does not have permission for this operation.",
             404: "The requested realm or resource was not found in Keycloak.",
             429: "Keycloak is rate-limiting requests. Retry later.",
