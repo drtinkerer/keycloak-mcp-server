@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from keycloak_mcp_server import __version__
 from keycloak_mcp_server.src.keycloak_api.auth import create_keycloak_auth
 from keycloak_mcp_server.src.mcp import KeycloakMCPServer
 from keycloak_mcp_server.src.settings import Settings, settings
@@ -41,7 +42,7 @@ def create_app(config: Settings) -> FastAPI:
                 "status": "healthy",
                 "service": "keycloak-mcp-server",
                 "transport_protocol": config.MCP_TRANSPORT_PROTOCOL,
-                "version": "0.1.0",
+                "version": __version__,
                 "authentication": "oauth" if auth else "disabled",
             }
         )
