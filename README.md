@@ -52,6 +52,7 @@ shows the shared account instead of the person. Here:
 
 - Read-only: no create, update or delete tools yet.
 - One realm per server: the realm users sign in to is the realm the tools inspect.
+- stdio mode does not check the token's audience locally; Keycloak validates it on every Admin API call.
 - Single instance: OAuth state is stored on local disk.
 
 ## Quick Start
@@ -170,7 +171,31 @@ codex mcp logout keycloak
 codex mcp remove keycloak
 ```
 
-## Use with Claude Code
+## Use with Claude Code: stdio, no server to run
+
+Claude Code starts the server with `uvx` and talks to it over stdin/stdout. On the
+first tool call the server opens the Keycloak sign-in in your browser itself
+(authorization code + PKCE, loopback callback), then uses **your** token for every
+Admin API call. Tokens are cached in `~/.cache/keycloak-mcp-server/tokens.json`
+(mode `0600`) and refreshed automatically.
+
+Add `http://127.0.0.1:8250/callback` as a valid redirect URI on the `keycloak-mcp`
+client, then:
+
+```bash
+claude mcp add --scope user keycloak \
+  -e KEYCLOAK_SERVER_URL=https://keycloak.example.com \
+  -e KEYCLOAK_REALM=myrealm \
+  -e KEYCLOAK_OAUTH_CLIENT_ID=keycloak-mcp \
+  -- uvx keycloak-mcp-server --stdio
+```
+
+No signing key or OAuth proxy settings are needed in this mode. It is for one person
+on their own machine; to share one server between users, use HTTP mode below. Set
+`KEYCLOAK_LOGIN_PORT` (and register that port's `/callback`) if 8250 is taken. To sign
+out, delete the cache file.
+
+## Use with Claude Code: HTTP
 
 ```bash
 claude mcp add --transport http --scope user keycloak http://localhost:5001/mcp
@@ -214,6 +239,8 @@ without an LLM.
 | `KEYCLOAK_OAUTH_CLIENT_SECRET` | Unset | Optional; only set for a confidential upstream client |
 | `KEYCLOAK_OAUTH_SIGNING_KEY` | Unset | Persistent random key of at least 32 characters |
 | `KEYCLOAK_OAUTH_AUDIENCE` | `keycloak-mcp` | Required `aud` claim; add an audience mapper for it |
+| `KEYCLOAK_LOGIN_PORT` | `8250` | stdio mode: loopback port for the sign-in callback |
+| `KEYCLOAK_TOKEN_CACHE_DIR` | `~/.cache/keycloak-mcp-server` | stdio mode: token cache directory |
 | `PYTHON_LOG_LEVEL`          | `INFO`      | Logging level                                                        |
 
 *\* `ENABLE_AUTH` is `True` in code but `False` in `.env.example`, so a fresh `make install` starts with tool discovery only.*

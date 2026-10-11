@@ -5,7 +5,6 @@ from typing import Any, NoReturn
 
 import uvicorn
 
-from keycloak_mcp_server.src.api import app
 from keycloak_mcp_server.src.settings import settings
 from keycloak_mcp_server.src.settings import validate_config as validate_config_func
 from keycloak_mcp_server.utils.pylogger import get_python_logger, get_uvicorn_log_config
@@ -86,12 +85,21 @@ def main() -> None:
     Raises:
         SystemExit: If the server fails to start due to configuration or other errors.
     """
+    if "--stdio" in sys.argv[1:]:
+        settings.MCP_TRANSPORT_PROTOCOL = "stdio"
     try:
         validate_config()
 
         logger.info(
             f"Server configured to use {settings.MCP_TRANSPORT_PROTOCOL} protocol"
         )
+        if settings.MCP_TRANSPORT_PROTOCOL == "stdio":
+            run_stdio()
+            return
+
+        # Imported here: building the HTTP app also builds the OAuth proxy,
+        # which stdio mode neither needs nor has settings for.
+        from keycloak_mcp_server.src.api import app
 
         uvicorn_config: dict[str, Any] = {}
         if settings.MCP_SSL_KEYFILE and settings.MCP_SSL_CERTFILE:
@@ -117,6 +125,14 @@ def main() -> None:
         handle_startup_error(e, "server startup")
     finally:
         logger.info("Keycloak MCP server shutting down")
+
+
+def run_stdio() -> None:
+    """Serve MCP over stdin/stdout for a client that launches this process."""
+    from keycloak_mcp_server.src.mcp import KeycloakMCPServer
+
+    # No HTTP OAuth proxy: tools sign the local user in through the browser.
+    KeycloakMCPServer(auth=None).mcp.run(transport="stdio", show_banner=False)
 
 
 def run() -> None:

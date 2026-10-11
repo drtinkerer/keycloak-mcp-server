@@ -6,7 +6,17 @@ This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-s
 
 ## [0.1.1] - 2026-10-11
 
+### Added
+
+- stdio mode (`keycloak-mcp-server --stdio`): MCP clients launch the server with `uvx`
+  and it signs the local user in through the browser (PKCE, loopback callback), caches
+  tokens in a `0600` file and refreshes them. No OAuth proxy settings are needed.
+
 ### Fixed
+
+- `.env` is read from the working directory. It was searched for from the package's
+  install directory, so `uvx` and `pip` installs never read it.
+- Logs go to stderr, keeping stdout for the stdio protocol.
 
 - Declare dependency ranges instead of exact pins, so `uvx` and `pip` can resolve
   versions with wheels for the user's Python. 0.1.0 failed to install on Python 3.14
