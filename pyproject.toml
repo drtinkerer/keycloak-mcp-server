@@ -28,7 +28,7 @@ classifiers = [
 dependencies = [
     # Ranges, not pins: uvx/pip resolve these; uv.lock pins CI and dev.
     # fastmcp is capped tightly because the OAuth proxy subclass uses its internals.
-    "fastmcp>=3.4.8,<3.5",
+    "fastmcp>=3.4.8,<4.1",
     "httpx>=0.28.1,<1",
     "pydantic>=2.11.7,<3",
     "pydantic-settings>=2.10.1,<3",
