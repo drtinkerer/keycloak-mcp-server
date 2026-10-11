@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from keycloak_mcp_server import __version__
 from keycloak_mcp_server.src.api import app, create_app
 from keycloak_mcp_server.src.settings import Settings
 
@@ -31,7 +32,7 @@ class TestAPI:
         assert data["status"] == "healthy"
         assert data["service"] == "keycloak-mcp-server"
         assert "transport_protocol" in data
-        assert data["version"] == "0.1.0"
+        assert data["version"] == __version__
 
     def test_health_endpoint_response_structure(self):
         """Test that health endpoint returns expected structure."""
