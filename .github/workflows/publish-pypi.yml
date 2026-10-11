@@ -1,0 +1,89 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_to_test:
+        description: 'Publish to Test PyPI instead of PyPI'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Check release tag matches package version
+      if: github.event_name == 'release'
+      run: |
+        version=$(uv version --short)
+        if [ "${{ github.event.release.tag_name }}" != "v${version}" ]; then
+          echo "Release tag ${{ github.event.release.tag_name }} does not match pyproject version v${version}"
+          exit 1
+        fi
+
+    - name: Build package
+      run: uv build
+
+    - name: Check package
+      run: uvx twine check dist/*
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: dist/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Install locked dependencies
+      run: uv sync --locked --python ${{ matrix.python-version }}
+
+    - name: Run tests
+      env:
+        ENABLE_AUTH: "False"
+      run: uv run --locked pytest --cov=keycloak_mcp_server --cov-report=term-missing
+
+  publish:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.publish_to_test == 'true' && 'test-pypi' || 'pypi' }}
+      url: ${{ github.event.inputs.publish_to_test == 'true' && 'https://test.pypi.org/p/keycloak-mcp-server' || 'https://pypi.org/p/keycloak-mcp-server' }}
+    permissions:
+      id-token: write  # Required for PyPI trusted publishing
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
+
+    - name: Publish to Test PyPI
+      if: github.event.inputs.publish_to_test == 'true'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
+
+    - name: Publish to PyPI
+      if: github.event.inputs.publish_to_test != 'true'
+      uses: pypa/gh-action-pypi-publish@release/v1

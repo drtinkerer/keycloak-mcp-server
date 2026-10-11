@@ -1,0 +1,43 @@
+# Git and version control
+.git/
+.gitignore
+.gitlab-ci.yml
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# IDE and editor files
+.cursor/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Development and documentation
+LICENSE
+Makefile
+.pre-commit-config.yaml
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# Local environment, credentials, and OAuth state
+.env
+.venv/
+.keycloak-oauth/
+
+# Test files (optional - remove if you want tests in container)
+tests/
+
+# Container files themselves
+Containerfile
+.containerignore
