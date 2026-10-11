@@ -19,6 +19,8 @@ USER default
 # Let uv select the project environment without inherited shell activation.
 ENV VIRTUAL_ENV=""
 
+# Listen on all interfaces: in a container, localhost is unreachable from outside.
+ENV MCP_HOST=0.0.0.0
 EXPOSE 5001
 # Runtime uses installed packages and needs no build-time cache access.
 CMD ["uv", "run", "--no-sync", "--no-cache", "keycloak-mcp-server"]

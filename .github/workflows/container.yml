@@ -1,0 +1,92 @@
+name: Container image
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write  # Push to GHCR with GITHUB_TOKEN; no stored credentials
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up QEMU (arm64 builds on amd64 runners)
+      uses: docker/setup-qemu-action@v4
+
+    - name: Set up Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Image tags and labels
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ${{ env.IMAGE }}
+        # main -> edge + sha-<short>; release v0.1.1 -> 0.1.1, 0.1, latest
+        tags: |
+          type=edge,branch=main
+          type=sha,enable=${{ github.event_name == 'push' }}
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+    - name: Build for smoke test
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: Containerfile
+        platforms: linux/amd64
+        load: true
+        tags: keycloak-mcp-server:smoke
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Smoke test
+      run: |
+        docker run -d --name smoke -p 5001:5001 -e ENABLE_AUTH=False keycloak-mcp-server:smoke
+        for i in $(seq 1 30); do
+          if body=$(curl -sf http://localhost:5001/health); then
+            echo "$body"
+            echo "$body" | grep -q '"service":"keycloak-mcp-server"' && exit 0
+          fi
+          sleep 1
+        done
+        docker logs smoke
+        exit 1
+
+    - name: Log in to GHCR
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push (amd64 + arm64)
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: Containerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

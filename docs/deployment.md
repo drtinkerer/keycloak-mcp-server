@@ -37,6 +37,26 @@ stable. `compose.yaml` mounts a named volume at `/app/.keycloak-oauth`; the Open
 manifests mount a `ReadWriteOnce` PVC at `/data` and run a single replica. Edit
 `deployment/openshift/configmap.yaml` and `secret.yaml` for your Keycloak first.
 
+## Container image
+
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR by
+`.github/workflows/container.yml`:
+
+| Trigger | Tags |
+| --- | --- |
+| Push to `main` | `edge`, `sha-<commit>` |
+| Release `vX.Y.Z` | `X.Y.Z`, `X.Y`, `latest` |
+| Pull request | Built and smoke-tested, not pushed |
+
+```bash
+docker pull ghcr.io/drtinkerer/keycloak-mcp-server:latest
+```
+
+The image listens on `0.0.0.0:5001` and runs HTTP mode. Configure it with the
+`KEYCLOAK_*` variables from the [authentication guide](authentication.md), and mount
+persistent storage at the OAuth state directory (`/app/.keycloak-oauth` by default,
+or `KEYCLOAK_OAUTH_STORAGE_DIR`).
+
 ## Container Build (`Containerfile`)
 
 The container uses the Red Hat UBI Python 3.12 image and uv:
