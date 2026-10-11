@@ -16,12 +16,12 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      uses: astral-sh/setup-uv@v7
 
     - name: Check release tag matches package version
       if: github.event_name == 'release'
@@ -39,21 +39,21 @@ jobs:
       run: uvx twine check dist/*
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dist
         path: dist/
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      uses: astral-sh/setup-uv@v7
 
     - name: Install locked dependencies
       run: uv sync --locked --python ${{ matrix.python-version }}
@@ -65,7 +65,7 @@ jobs:
 
   publish:
     needs: [build, test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: ${{ github.event.inputs.publish_to_test == 'true' && 'test-pypi' || 'pypi' }}
       url: ${{ github.event.inputs.publish_to_test == 'true' && 'https://test.pypi.org/p/keycloak-mcp-server' || 'https://pypi.org/p/keycloak-mcp-server' }}
@@ -73,7 +73,7 @@ jobs:
       id-token: write  # Required for PyPI trusted publishing
     steps:
     - name: Download build artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: dist
         path: dist/
