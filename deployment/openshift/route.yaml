@@ -1,0 +1,16 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak-mcp-server
+  labels:
+    app: keycloak-mcp-server
+    component: mcp-server
+spec:
+  to:
+    kind: Service
+    name: keycloak-mcp-server
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

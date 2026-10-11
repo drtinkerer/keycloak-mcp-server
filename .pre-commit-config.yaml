@@ -1,0 +1,47 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        exclude: ^uv\.lock$
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-json
+      - id: check-toml
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run --locked ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        exclude: ^tests/
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --locked ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy
+        entry: uv run --locked mypy keycloak_mcp_server/
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+      - id: pydocstyle
+        name: pydocstyle
+        entry: uv run --locked pydocstyle --convention=google
+        language: system
+        types: [python]
+        exclude: ^tests/
+      - id: bandit
+        name: bandit
+        entry: uv run --locked bandit -ll
+        language: system
+        types: [python]
+        exclude: ^tests/

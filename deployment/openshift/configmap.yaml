@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-mcp-server-config
+  labels:
+    app: keycloak-mcp-server
+    component: mcp-server
+data:
+  MCP_PORT: "5001"
+  PYTHON_LOG_LEVEL: "INFO"
+  MCP_TRANSPORT_PROTOCOL: "http"
+  ENVIRONMENT: "production"
+  ENABLE_AUTH: "true"
+  # Public HTTPS origin of this server (the Route host); also register
+  # <MCP_HOST_ENDPOINT>/auth/callback as the client's redirect URI.
+  MCP_HOST_ENDPOINT: "https://keycloak-mcp.example.com"
+  KEYCLOAK_SERVER_URL: "https://keycloak.example.com"
+  KEYCLOAK_REALM: "myrealm"
+  KEYCLOAK_OAUTH_CLIENT_ID: "keycloak-mcp"
+  KEYCLOAK_OAUTH_AUDIENCE: "keycloak-mcp"
+  KEYCLOAK_OAUTH_SCOPES: "openid profile email"
+  KEYCLOAK_OAUTH_STORAGE_DIR: "/data/keycloak-oauth"
