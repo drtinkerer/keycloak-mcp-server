@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-server/releases) for detailed changelogs. Release notes are auto-generated from merged pull request titles and labels.
 
+## [0.1.2] - 2026-10-13
+
+### Added
+
+- Gateway token exchange (RFC 8693) in HTTP mode: with `KEYCLOAK_TRUSTED_EXCHANGERS`
+  set (e.g. `["mcp-context-forge"]`), Keycloak access tokens that a trusted gateway
+  exchanged for this server's audience are accepted next to the OAuth proxy's own
+  tokens, and forwarded to the Admin API unchanged, so Keycloak still authorizes the
+  original user. Off by default. A plain sign-in token for this server's own client
+  cannot use this path.
+- Multi-arch container image (`linux/amd64`, `linux/arm64`) on
+  `ghcr.io/drtinkerer/keycloak-mcp-server`, built, smoke-tested and pushed by CI.
+
+### Changed
+
+- The image listens on `0.0.0.0` by default.
+- README credits the upstream template and summarizes the changes from it.
+
 ## [0.1.1] - 2026-10-11
 
 ### Added
@@ -17,7 +35,6 @@ This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-s
 - `.env` is read from the working directory. It was searched for from the package's
   install directory, so `uvx` and `pip` installs never read it.
 - Logs go to stderr, keeping stdout for the stdio protocol.
-
 - Declare dependency ranges instead of exact pins, so `uvx` and `pip` can resolve
   versions with wheels for the user's Python. 0.1.0 failed to install on Python 3.14
   (no `pydantic-core` wheel for the pinned version).
