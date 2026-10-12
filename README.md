@@ -239,6 +239,7 @@ without an LLM.
 | `KEYCLOAK_OAUTH_CLIENT_SECRET` | Unset | Optional; only set for a confidential upstream client |
 | `KEYCLOAK_OAUTH_SIGNING_KEY` | Unset | Persistent random key of at least 32 characters |
 | `KEYCLOAK_OAUTH_AUDIENCE` | `keycloak-mcp` | Required `aud` claim; add an audience mapper for it |
+| `KEYCLOAK_TRUSTED_EXCHANGERS` | `[]` | HTTP mode: gateway clients whose RFC 8693 exchanged tokens are accepted, e.g. `["mcp-context-forge"]` |
 | `KEYCLOAK_LOGIN_PORT` | `8250` | stdio mode: loopback port for the sign-in callback |
 | `KEYCLOAK_TOKEN_CACHE_DIR` | `~/.cache/keycloak-mcp-server` | stdio mode: token cache directory |
 | `PYTHON_LOG_LEVEL`          | `INFO`      | Logging level                                                        |

@@ -185,6 +185,25 @@ public and confidential registration, browser consent and callback, PKCE failure
 user identities, permissions, refresh, encrypted storage, invalid JWT claims, and
 rejection of raw upstream tokens. This does not replace a live browser login test.
 
+## Gateways and token exchange (RFC 8693)
+
+An MCP gateway such as [ContextForge](https://github.com/IBM/mcp-context-forge) can sign
+users in once and exchange their Keycloak token for one addressed to this server, so
+users do not log in to each MCP server separately. Allow the gateway's Keycloak client:
+
+```dotenv
+KEYCLOAK_TRUSTED_EXCHANGERS=["mcp-context-forge"]
+```
+
+The server then accepts, next to its own OAuth proxy tokens, Keycloak access tokens
+that are signed by the realm, include `KEYCLOAK_OAUTH_AUDIENCE` in `aud`, and have
+one of these clients as `azp` (after a standard token exchange, `azp` is the client
+that performed it). The token is forwarded to the Admin API unchanged, so Keycloak
+still authorizes the original user. Tokens issued to this server's own client are
+not accepted on this path, so a plain sign-in token cannot bypass the proxy. The
+exchanged token must carry the user's `realm-management` roles for Admin API calls
+to succeed; check the exchanging client's role scope if tools return permission errors.
+
 ## Troubleshooting
 
 | Symptom | Check |

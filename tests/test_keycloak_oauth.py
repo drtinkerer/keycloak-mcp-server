@@ -407,6 +407,131 @@ async def test_upstream_tokens_require_claims_and_expected_identity(oauth_env, c
         await app.state.keycloak_auth.aclose()
 
 
+def exchange_app(config):
+    """Rebuild the app with an RFC 8693 exchanger trusted, e.g. a gateway."""
+    config.KEYCLOAK_TRUSTED_EXCHANGERS = ["mcp-context-forge"]
+    return api_module.create_app(config)
+
+
+def asgi_mcp_client(app, token):
+    def factory(**kwargs):
+        return oauth_http.AsyncClient(transport=oauth_http.ASGITransport(app), **kwargs)
+
+    return Client(
+        StreamableHttpTransport(
+            "http://localhost:5001/mcp", auth=token, httpx_client_factory=factory
+        )
+    )
+
+
+def exchanged(mint, user, **changes):
+    """A token as Keycloak issues it after a gateway's on-behalf-of exchange."""
+    claims = {
+        "aud": ["mcp-context-forge", "realm-management"],
+        "azp": "mcp-context-forge",
+        "scope": "exchange-keycloak-mcp",  # No openid: only the exchange scope.
+    }
+    claims.update(changes)
+    return mint(user, **claims)
+
+
+@pytest.mark.asyncio
+async def test_exchanged_token_from_trusted_gateway_calls_admin_api_as_user(
+    oauth_env,
+):
+    config, _, _, _, mint, requests, issued = oauth_env
+    app = exchange_app(config)
+    assert isinstance(app.state.keycloak_auth, auth_module.KeycloakMultiAuth)
+    token = exchanged(mint, "alice")
+    async with app.router.lifespan_context(app):
+        async with asgi_mcp_client(app, token) as client:
+            result = await client.call_tool(
+                "search_users", {"username": "alice", "exact": True}
+            )
+    assert result.data["items"][0]["username"] == "alice"
+    admin_calls = [r for r in requests if "/admin/" in r.url.path]
+    # The exchanged user token itself reaches the Admin API: still Alice.
+    assert [r.headers["authorization"] for r in admin_calls] == ["Bearer " + token]
+    assert issued[token] == "alice"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"azp": "keycloak-mcp"},  # A plain sign-in token must not skip the proxy.
+        {"azp": "unrelated-client"},
+        {"aud": ["mcp-context-forge"]},  # Exchanged for some other audience.
+        {"iss": "https://evil.example/realms/employees"},
+        {"exp": 1},
+        {"typ": "ID"},
+        {"sub": ""},
+    ],
+)
+async def test_exchange_path_rejects_tokens_outside_its_trust(oauth_env, changes):
+    config, _, _, _, mint, requests, _ = oauth_env
+    app = exchange_app(config)
+    token = exchanged(mint, "alice", **changes)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://localhost:5001"
+        ) as client:
+            response = await client.post(
+                "/mcp", headers={"Authorization": "Bearer " + token}, json={}
+            )
+    assert response.status_code == 401
+    assert not [r for r in requests if "/admin/" in r.url.path]
+
+
+@pytest.mark.asyncio
+async def test_exchanged_tokens_are_rejected_unless_an_exchanger_is_trusted(
+    oauth_env,
+):
+    _, app, browser, _, mint, _, _ = oauth_env
+    assert isinstance(app.state.keycloak_auth, auth_module.KeycloakOAuthProxy)
+    async with app.router.lifespan_context(app):
+        async with browser() as client:
+            response = await client.post(
+                "/mcp",
+                headers={"Authorization": "Bearer " + exchanged(mint, "alice")},
+                json={},
+            )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_browser_sign_in_still_works_with_exchange_enabled(oauth_env):
+    config, _, _, _, _, _, _ = oauth_env
+    app = exchange_app(config)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://localhost:5001"
+        ) as browser:
+            discovery = await browser.get("/.well-known/oauth-authorization-server")
+            assert discovery.status_code == 200
+            _, tokens = await complete_login(browser, "bob")
+        async with asgi_mcp_client(app, tokens["access_token"]) as client:
+            result = await client.call_tool(
+                "search_users", {"username": "alice", "exact": True}
+            )
+    assert result.data["items"][0]["username"] == "alice"
+
+
+@pytest.mark.parametrize(
+    "exchangers, message",
+    [
+        (["keycloak-mcp"], "must not include KEYCLOAK_OAUTH_CLIENT_ID"),
+        ([""], "must be client IDs"),
+        ([" mcp-context-forge"], "must be client IDs"),
+    ],
+)
+def test_trusted_exchangers_are_validated(oauth_env, exchangers, message):
+    config = oauth_env[0]
+    config.KEYCLOAK_TRUSTED_EXCHANGERS = exchangers
+    with pytest.raises(ValueError, match=message):
+        auth_module.create_keycloak_auth(config)
+
+
 @pytest.mark.asyncio
 async def test_oauth_mode_ignores_shared_test_tokens(oauth_env):
     _, app, _, _, _, requests, _ = oauth_env

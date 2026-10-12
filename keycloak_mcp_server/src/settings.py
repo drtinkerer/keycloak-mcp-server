@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     KEYCLOAK_OAUTH_CLIENT_SECRET: Optional[SecretStr] = None
     KEYCLOAK_OAUTH_SIGNING_KEY: Optional[SecretStr] = None
     KEYCLOAK_OAUTH_AUDIENCE: str = "keycloak-mcp"
+    # HTTP mode: Keycloak clients (e.g. an MCP gateway) whose RFC 8693
+    # exchanged tokens for KEYCLOAK_OAUTH_AUDIENCE are accepted directly, next
+    # to the OAuth proxy. JSON array, e.g. ["mcp-context-forge"]. Empty: off.
+    KEYCLOAK_TRUSTED_EXCHANGERS: List[str] = Field(default_factory=list)
     KEYCLOAK_OAUTH_SCOPES: str = "openid profile email"
     KEYCLOAK_OAUTH_STORAGE_DIR: str = ".keycloak-oauth"
     KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS: List[str] = Field(

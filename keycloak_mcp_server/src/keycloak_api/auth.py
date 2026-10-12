@@ -8,7 +8,7 @@ from urllib.parse import quote, urlparse
 import httpx2
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from cryptography.fernet import Fernet
-from fastmcp.server.auth import AccessToken, OAuthProxy
+from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from key_value.aio.stores.filetree import FileTreeStore
@@ -18,12 +18,18 @@ from keycloak_mcp_server.src.settings import Settings
 
 
 class KeycloakTokenVerifier(JWTVerifier):
-    """Accept only signed Keycloak access tokens issued to our registered client."""
+    """Accept signed Keycloak user access tokens from an allowed authorized party."""
 
-    def __init__(self, *, client_id: str, **kwargs):
-        """Configure JWT verification for the registered Keycloak client."""
+    def __init__(self, *, allowed_azp: frozenset[str], **kwargs):
+        """Configure JWT verification and the clients allowed as `azp`.
+
+        `azp` is the client that requested the token. For browser sign-in it
+        is this server's own Keycloak client. After an RFC 8693 token
+        exchange it is the exchanging client (e.g. a gateway acting on behalf
+        of the user), not the audience the exchange targeted.
+        """
         super().__init__(**kwargs)
-        self.keycloak_client_id = client_id
+        self.allowed_azp = allowed_azp
 
     async def verify_token(self, token: str) -> AccessToken | None:
         """Validate the JWT and require the Keycloak user access-token claims."""
@@ -35,7 +41,7 @@ class KeycloakTokenVerifier(JWTVerifier):
         # JWTVerifier checks signature, issuer, audience and scopes. Require the
         # Keycloak access-token claims too; an ID token is never an Admin API token.
         if (
-            claims.get("azp") != self.keycloak_client_id
+            claims.get("azp") not in self.allowed_azp
             or claims.get("typ") != "Bearer"
             or not isinstance(claims.get("sub"), str)
             or not claims["sub"]
@@ -87,8 +93,37 @@ class KeycloakOAuthProxy(OAuthProxy):
         await self.verification_client.aclose()
 
 
-def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
-    """Build a proxy for a configured Keycloak realm; disabled auth has no routes."""
+class KeycloakMultiAuth(MultiAuth):
+    """The OAuth proxy plus direct verification of token-exchanged tokens."""
+
+    def __init__(self, *, proxy: KeycloakOAuthProxy, exchange: KeycloakTokenVerifier):
+        """Try the proxy's own tokens first, then exchanged Keycloak tokens."""
+        super().__init__(
+            server=proxy,
+            server_source_id="keycloak-oauth-proxy",
+            verifiers={"keycloak-token-exchange": exchange},
+            # The proxy path already requires `openid` in its upstream token
+            # check. An exchanged token carries the scopes requested in the
+            # exchange instead, so the shared request-level check is cleared.
+            required_scopes=[],
+        )
+        self.proxy = proxy
+
+    async def aclose(self) -> None:
+        """Release the shared JWKS HTTP client."""
+        await self.proxy.aclose()
+
+
+def create_keycloak_auth(
+    config: Settings,
+) -> KeycloakOAuthProxy | KeycloakMultiAuth | None:
+    """Build auth for a configured Keycloak realm; disabled auth has no routes.
+
+    Browser sign-in always goes through the OAuth proxy. When
+    KEYCLOAK_TRUSTED_EXCHANGERS is set, Keycloak access tokens that one of
+    those clients obtained by RFC 8693 token exchange for this server's
+    audience are also accepted directly.
+    """
     if not config.ENABLE_AUTH:
         return None
     required = (
@@ -145,6 +180,14 @@ def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
         )
     if not config.KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS:
         raise ValueError("Configure at least one allowed MCP client redirect URI.")
+    exchangers = frozenset(config.KEYCLOAK_TRUSTED_EXCHANGERS)
+    if any(not exchanger or exchanger.strip() != exchanger for exchanger in exchangers):
+        raise ValueError("KEYCLOAK_TRUSTED_EXCHANGERS entries must be client IDs.")
+    if config.KEYCLOAK_OAUTH_CLIENT_ID in exchangers:
+        # Otherwise a plain sign-in token for this client could skip the proxy.
+        raise ValueError(
+            "KEYCLOAK_TRUSTED_EXCHANGERS must not include KEYCLOAK_OAUTH_CLIENT_ID."
+        )
     issuer = upstream + "/realms/" + quote(config.KEYCLOAK_REALM, safe="")
     oidc = issuer + "/protocol/openid-connect"
     verify = ssl.create_default_context(cafile=config.KEYCLOAK_CA_BUNDLE)
@@ -152,7 +195,7 @@ def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
         verify=verify, timeout=config.KEYCLOAK_TIMEOUT
     )
     verifier = KeycloakTokenVerifier(
-        client_id=config.KEYCLOAK_OAUTH_CLIENT_ID,
+        allowed_azp=frozenset({config.KEYCLOAK_OAUTH_CLIENT_ID}),
         jwks_uri=oidc + "/certs",
         issuer=issuer,
         audience=config.KEYCLOAK_OAUTH_AUDIENCE,
@@ -171,7 +214,7 @@ def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
         key_value=FileTreeStore(data_directory=directory),
         fernet=Fernet(encryption_key),
     )
-    return KeycloakOAuthProxy(
+    proxy = KeycloakOAuthProxy(
         upstream_authorization_endpoint=oidc + "/auth",
         upstream_token_endpoint=oidc + "/token",
         upstream_client_id=config.KEYCLOAK_OAUTH_CLIENT_ID,
@@ -200,3 +243,14 @@ def create_keycloak_auth(config: Settings) -> KeycloakOAuthProxy | None:
         timeout=config.KEYCLOAK_TIMEOUT,
         verification_client=verification_client,
     )
+    if not exchangers:
+        return proxy
+    exchange = KeycloakTokenVerifier(
+        allowed_azp=exchangers,
+        jwks_uri=oidc + "/certs",
+        issuer=issuer,
+        audience=config.KEYCLOAK_OAUTH_AUDIENCE,
+        algorithm="RS256",
+        http_client=verification_client,
+    )
+    return KeycloakMultiAuth(proxy=proxy, exchange=exchange)
