@@ -146,10 +146,12 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
         token = await get_local_login().access_token()
     elif settings.ENABLE_AUTH:
         access = get_access_token()
-        if access is None:
+        if access is None or not access.claims.get("keycloak_admin_token"):
             raise ToolError(
                 "Sign in through your MCP client before calling Keycloak tools."
             )
+        # KeycloakTokenVerifier has checked this Keycloak access token: realm
+        # signature, issuer, audience, azp and expiry. It is sent on as the user.
         token = access.token
     else:
         token = _user_access_token.get()

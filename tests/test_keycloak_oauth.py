@@ -1,6 +1,7 @@
 """Exercise stateless Keycloak auth and MCP calls against a simulated Keycloak."""
 
 import asyncio
+import ssl
 import time
 
 import httpx
@@ -37,7 +38,7 @@ def oauth_env(tmp_path, monkeypatch):
         KEYCLOAK_SERVER_URL="https://keycloak.example/",
         KEYCLOAK_REALM="employees",
         KEYCLOAK_OAUTH_CLIENT_ID="keycloak-mcp",
-        KEYCLOAK_OAUTH_AUDIENCE="realm-management",
+        KEYCLOAK_OAUTH_AUDIENCE="keycloak-mcp",
         KEYCLOAK_CA_BUNDLE=None,
         KEYCLOAK_DEV_ACCESS_TOKEN=None,
         MCP_HOST_ENDPOINT="http://localhost:5001",
@@ -70,7 +71,7 @@ def oauth_env(tmp_path, monkeypatch):
     def mint(user, **changes):
         claims = {
             "iss": "https://keycloak.example/realms/employees",
-            "aud": "realm-management",
+            "aud": ["keycloak-mcp", "realm-management", "account"],
             "azp": "keycloak-mcp",
             "typ": "Bearer",
             "sub": user,
@@ -90,12 +91,15 @@ def oauth_env(tmp_path, monkeypatch):
         if request.url.path.endswith("/certs"):
             return httpx.Response(200, json={"keys": [jwk]})
         if request.url.path.endswith("/.well-known/openid-configuration"):
-            return httpx.Response(200, json={
-                "issuer": "https://keycloak.example/realms/employees",
-                "authorization_endpoint": "https://keycloak.example/realms/employees/protocol/openid-connect/auth",
-                "token_endpoint": "https://keycloak.example/realms/employees/protocol/openid-connect/token",
-                "jwks_uri": "https://keycloak.example/realms/employees/protocol/openid-connect/certs",
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": "https://keycloak.example/realms/employees",
+                    "authorization_endpoint": "https://keycloak.example/realms/employees/protocol/openid-connect/auth",
+                    "token_endpoint": "https://keycloak.example/realms/employees/protocol/openid-connect/token",
+                    "jwks_uri": "https://keycloak.example/realms/employees/protocol/openid-connect/certs",
+                },
+            )
         assert request.method == "GET"
         upstream_token = request.headers["authorization"].removeprefix("Bearer ")
         assert upstream_token in issued
@@ -181,6 +185,13 @@ async def test_protected_resource_metadata_points_to_keycloak(oauth_env):
             assert protected.status_code == 200
             data = protected.json()
             assert data["resource"] == "http://localhost:5001/mcp"
+            assert [s.rstrip("/") for s in data["authorization_servers"]] == [
+                "https://keycloak.example/realms/employees"
+            ]
+            assert "openid" in data["scopes_supported"]
+            # A resource server only: no proxy endpoints, nothing to store.
+            for path in ("/authorize", "/token", "/register", "/auth/callback"):
+                assert (await client.get(path)).status_code == 404
 
 
 @pytest.mark.asyncio
@@ -198,18 +209,14 @@ async def test_valid_keycloak_token_calls_admin_api(oauth_env):
     token = mint("alice")
     async with app.router.lifespan_context(app):
         async with mcp_client(token) as client:
-            assert len(await client.list_tools()) == len(
-                keycloak_tools.KEYCLOAK_TOOLS
-            )
+            assert len(await client.list_tools()) == len(keycloak_tools.KEYCLOAK_TOOLS)
             result = await client.call_tool(
                 "search_users", {"username": "alice", "exact": True}
             )
             assert result.data["items"][0]["username"] == "alice"
             assert "must-not-be-returned" not in str(result)
     admin_calls = [r for r in requests if "/admin/" in r.url.path]
-    assert all(
-        r.headers["authorization"] == f"Bearer {token}" for r in admin_calls
-    )
+    assert all(r.headers["authorization"] == f"Bearer {token}" for r in admin_calls)
 
 
 @pytest.mark.asyncio
@@ -233,12 +240,20 @@ async def test_two_users_isolated_by_token(oauth_env):
     "changes",
     [
         {"aud": "unrelated-app"},
+        {"aud": ["realm-management", "account"]},
         {"iss": "https://evil.example/realms/employees"},
         {"exp": 1},
+        {"nbf": int(time.time()) + 300},
+        # Another client of the realm, even with this server's audience.
+        {"azp": "mcp-clients"},
+        {"azp": "mcp-context-forge"},
+        {"typ": "ID"},
+        {"sub": ""},
+        {"scope": "profile email"},
     ],
 )
 async def test_invalid_tokens_are_rejected(oauth_env, changes):
-    """Standard JWT claims (iss, aud, exp) are validated by KeycloakAuthProvider."""
+    """Sign-in tokens must be this realm's access tokens for this client and audience."""
     _, app, browser, _, mint, _, _ = oauth_env
     token = mint("alice", **changes)
     async with app.router.lifespan_context(app):
@@ -269,7 +284,7 @@ def asgi_mcp_client(app, token):
 def exchanged(mint, user, **changes):
     """A token as Keycloak issues it after a gateway's on-behalf-of exchange."""
     claims = {
-        "aud": ["mcp-context-forge", "realm-management"],
+        "aud": ["keycloak-mcp", "realm-management"],
         "azp": "mcp-context-forge",
         "scope": "exchange-keycloak-mcp",
     }
@@ -300,6 +315,7 @@ async def test_exchanged_token_from_trusted_gateway(oauth_env):
     [
         {"azp": "keycloak-mcp"},
         {"azp": "unrelated-client"},
+        {"azp": "unrelated-client", "scope": "openid"},
         {"aud": ["mcp-context-forge"]},
         {"iss": "https://evil.example/realms/employees"},
         {"exp": 1},
@@ -345,3 +361,62 @@ async def test_auth_mode_ignores_shared_test_tokens(oauth_env):
             with pytest.raises(ToolError, match="Sign in"):
                 await keycloak_tools.search_users(username="alice")
     assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_exchanged_token_needs_a_trusted_exchanger(oauth_env):
+    """Without KEYCLOAK_TRUSTED_EXCHANGERS a gateway's token is refused, even with openid."""
+    _, app, browser, _, mint, requests, _ = oauth_env
+    token = exchanged(mint, "alice", scope="openid exchange-keycloak-mcp")
+    async with app.router.lifespan_context(app):
+        async with browser() as client:
+            response = await client.post(
+                "/mcp", headers={"Authorization": "Bearer " + token}, json={}
+            )
+    assert response.status_code == 401
+    assert not [r for r in requests if "/admin/" in r.url.path]
+
+
+@pytest.mark.parametrize(
+    "changes, message",
+    [
+        ({"KEYCLOAK_OAUTH_CLIENT_ID": ""}, "KEYCLOAK_OAUTH_CLIENT_ID"),
+        ({"KEYCLOAK_REALM": ""}, "KEYCLOAK_REALM"),
+        ({"KEYCLOAK_OAUTH_AUDIENCE": ""}, "KEYCLOAK_OAUTH_AUDIENCE"),
+        ({"KEYCLOAK_DEV_ACCESS_TOKEN": "dev-token"}, "KEYCLOAK_DEV_ACCESS_TOKEN"),
+        ({"MCP_HOST_ENDPOINT": "http://mcp.example"}, "MCP_HOST_ENDPOINT"),
+        ({"MCP_HOST_ENDPOINT": "https://mcp.example/mcp"}, "MCP_HOST_ENDPOINT"),
+        ({"KEYCLOAK_SERVER_URL": "http://keycloak.example"}, "HTTPS"),
+    ],
+)
+def test_startup_rejects_unsafe_configuration(oauth_env, changes, message):
+    config = oauth_env[0].model_copy(update=changes)
+    with pytest.raises(ValueError, match=message):
+        auth_module.create_keycloak_auth(config)
+
+
+def test_jwks_fetch_trusts_the_configured_ca_bundle(oauth_env, monkeypatch):
+    calls = []
+    default_context = ssl.create_default_context
+
+    def context(cafile=None):
+        calls.append(cafile)
+        return default_context()
+
+    monkeypatch.setattr(auth_module.ssl, "create_default_context", context)
+    config = oauth_env[0].model_copy(update={"KEYCLOAK_CA_BUNDLE": "/etc/ca.pem"})
+    auth = auth_module.create_keycloak_auth(config)
+    assert calls == ["/etc/ca.pem"]
+    assert auth.token_verifier._http_client is auth.verification_client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exchangers", [[], ["mcp-context-forge"]])
+async def test_shutdown_closes_the_jwks_client(oauth_env, exchangers):
+    config = oauth_env[0].model_copy(update={"KEYCLOAK_TRUSTED_EXCHANGERS": exchangers})
+    app = api_module.create_app(config)
+    async with app.router.lifespan_context(app):
+        pass
+    auth = app.state.keycloak_auth
+    provider = auth.provider if exchangers else auth
+    assert provider.verification_client.is_closed

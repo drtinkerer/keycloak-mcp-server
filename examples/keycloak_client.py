@@ -6,13 +6,22 @@ import json
 from typing import Any
 
 from fastmcp import Client
+from fastmcp.client.auth import OAuth
 
 
 async def run(
-    url: str, list_only: bool, username: str | None, oauth: bool = False
+    url: str,
+    list_only: bool,
+    username: str | None,
+    oauth: bool = False,
+    client_id: str = "keycloak-mcp",
+    callback_port: int = 9876,
 ) -> None:
     """Discover tools and optionally smoke-test them with the user’s identity."""
-    async with Client(url, auth="oauth" if oauth else None) as client:
+    # The server is a resource server: sign in to Keycloak with its pre-registered
+    # public client, on a callback port registered as a redirect URI.
+    auth = OAuth(client_id=client_id, callback_port=callback_port) if oauth else None
+    async with Client(url, auth=auth) as client:
         tools = await client.list_tools()
         print("Available tools:")
         for tool in tools:
@@ -53,11 +62,29 @@ def main() -> None:
         "--username", help="Exact user to inspect instead of the first user"
     )
     parser.add_argument(
-        "--oauth", action="store_true", help="Sign in through browser OAuth"
+        "--oauth", action="store_true", help="Sign in to Keycloak in the browser"
+    )
+    parser.add_argument(
+        "--client-id", default="keycloak-mcp", help="Keycloak client to sign in with"
+    )
+    parser.add_argument(
+        "--callback-port",
+        type=int,
+        default=9876,
+        help="Loopback port registered as a redirect URI on the client",
     )
     args = parser.parse_args()
     try:
-        asyncio.run(run(args.url, args.list_only, args.username, args.oauth))
+        asyncio.run(
+            run(
+                args.url,
+                args.list_only,
+                args.username,
+                args.oauth,
+                args.client_id,
+                args.callback_port,
+            )
+        )
     except Exception as error:
         parser.exit(1, f"Keycloak MCP test failed: {error}\n")
 

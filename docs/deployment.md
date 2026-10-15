@@ -27,15 +27,13 @@ make deploy openshift NAMESPACE=your-project-name
 make undeploy openshift
 ```
 
-### OAuth configuration and storage
+### Keycloak configuration
 
-The Keycloak OAuth proxy does not use PostgreSQL. Configure the `KEYCLOAK_*` values
-from the [authentication guide](authentication.md), set the public HTTPS origin
-in `MCP_HOST_ENDPOINT`, and register the matching `/auth/callback` URI in Keycloak.
-Mount persistent storage for the OAuth state directory and keep the signing key
-stable. `compose.yaml` mounts a named volume at `/app/.keycloak-oauth`; the OpenShift
-manifests mount a `ReadWriteOnce` PVC at `/data` and run a single replica. Edit
-`deployment/openshift/configmap.yaml` and `secret.yaml` for your Keycloak first.
+The server is stateless: it needs no database, volume, or secret. Configure the
+`KEYCLOAK_*` values from the [authentication guide](authentication.md) and set the
+public HTTPS origin in `MCP_HOST_ENDPOINT`. The OpenShift manifests run two replicas
+with rolling updates; scale them freely. Edit `deployment/openshift/configmap.yaml`
+for your Keycloak first.
 
 ## Container image
 
@@ -53,9 +51,8 @@ docker pull ghcr.io/drtinkerer/keycloak-mcp-server:latest
 ```
 
 The image listens on `0.0.0.0:5001` and runs HTTP mode. Configure it with the
-`KEYCLOAK_*` variables from the [authentication guide](authentication.md), and mount
-persistent storage at the OAuth state directory (`/app/.keycloak-oauth` by default,
-or `KEYCLOAK_OAUTH_STORAGE_DIR`).
+`KEYCLOAK_*` variables from the [authentication guide](authentication.md); it needs
+no persistent storage.
 
 ## Container Build (`Containerfile`)
 

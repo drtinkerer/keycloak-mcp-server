@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     # Ranges, not pins: uvx/pip resolve these; uv.lock pins CI and dev.
-    # fastmcp is capped tightly because the OAuth proxy subclass uses its internals.
+    # fastmcp is capped tightly because auth subclasses its Keycloak and JWT providers.
     "fastmcp>=4.1.0,<4.2",
     "httpx>=0.28.1,<1",
     "httpx2>=2.13.1,<3",

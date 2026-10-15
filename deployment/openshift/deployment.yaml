@@ -6,10 +6,10 @@ metadata:
     app: keycloak-mcp-server
     component: mcp-server
 spec:
-  # OAuth state lives on a ReadWriteOnce volume: run a single replica.
-  replicas: 1
+  # Stateless: every replica verifies tokens against the realm's keys.
+  replicas: 2
   strategy:
-    type: Recreate
+    type: RollingUpdate
   selector:
     matchLabels:
       app: keycloak-mcp-server
@@ -34,11 +34,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: keycloak-mcp-server-config
-            - secretRef:
-                name: keycloak-mcp-server-secrets
-          volumeMounts:
-            - name: oauth-state
-              mountPath: /data
           livenessProbe:
             httpGet:
               path: /health
@@ -62,8 +57,4 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
-      volumes:
-        - name: oauth-state
-          persistentVolumeClaim:
-            claimName: keycloak-mcp-server-oauth
       restartPolicy: Always

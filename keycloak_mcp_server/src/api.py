@@ -28,7 +28,7 @@ def create_app(config: Settings) -> FastAPI:
             async with mcp_app.lifespan(app):
                 yield
         finally:
-            if auth is not None and hasattr(auth, "aclose"):
+            if auth is not None:
                 await auth.aclose()
 
     app = FastAPI(lifespan=lifespan)

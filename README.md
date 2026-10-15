@@ -9,15 +9,15 @@
 
 An MCP server for the Keycloak Admin REST API where **every call runs as the
 signed-in user**. Users log in to Keycloak from their MCP client (Claude Code,
-Codex, …); the server forwards *their own* access token to the Admin API, so
-Keycloak enforces each user's existing roles. There is no shared admin
-password or service account.
+…) in the browser; the server checks *their own* access token and sends it to the
+Admin API, so Keycloak enforces each user's existing roles. There is no shared
+admin password or service account, and the server stores nothing.
 
 ```
-MCP client ──login (OAuth 2.1 + PKCE)──▶ this server ──▶ Keycloak login page
-     │                                        │ keeps the user's Keycloak token, encrypted
-     └── tool call with an MCP-only token ──▶ │ ──Admin API, Bearer <user's token>──▶ Keycloak
-                                                                    (decides: allowed / 403)
+MCP client ──browser login (OAuth 2.1 + PKCE)──▶ Keycloak
+     │
+     └── tool call, Bearer <user's token> ──▶ this server ──Admin API, same token──▶ Keycloak
+                     (verifies signature, audience, client)          (decides: allowed / 403)
 ```
 
 ## Why per-user identity
@@ -29,10 +29,10 @@ shows the shared account instead of the person. Here:
 - **Least privilege for free**: a user with only `view-clients` can list clients
   and gets a clean permission error for everything else.
 - **Audit trails name the real user**.
-- **No admin password or client secret to store**: the Keycloak client is public, with PKCE.
-- **The MCP client never holds the Keycloak token**: the
-  [FastMCP OAuth proxy](https://gofastmcp.com/servers/auth/oauth-proxy) issues it a
-  token that only works on this server, and stores the Keycloak token encrypted.
+- **No admin password, client secret or signing key to store**: the Keycloak client is
+  public, with PKCE.
+- **Stateless**: tokens are verified against the realm's keys on every request; there
+  is no session store or volume, so it scales to any number of replicas.
 - **No fallback identity**: requests are never retried as a service account, and the
   SDK is prevented from silently logging in again.
 
@@ -41,8 +41,10 @@ shows the shared account instead of the person. Here:
 - **20 read-only tools**: realm settings; users, groups and memberships; clients,
   client scopes and protocol mappers; direct and effective role mappings and role
   holders; login and admin events; sessions; access-token previews; LDAP federation
-- **Browser OAuth** for any MCP client, with consent, PKCE, audience-bound JWT
-  validation and encrypted per-user token storage, with no database
+- **Browser sign-in** through Keycloak itself (RFC 9728 discovery, PKCE), with
+  audience- and client-bound JWT validation and no database or storage
+- **Gateway support**: tokens a gateway such as ContextForge obtained by RFC 8693
+  token exchange are accepted from configured clients
 - **Bounded, safe output**: pagination capped at 100, selected fields only; secrets,
   credentials and admin-event payloads are never returned
 - **FastMCP + FastAPI**, HTTP/SSE/streamable-HTTP transports, Pydantic settings,
@@ -54,7 +56,10 @@ shows the shared account instead of the person. Here:
 - Read-only: no create, update or delete tools yet.
 - One realm per server: the realm users sign in to is the realm the tools inspect.
 - stdio mode does not check the token's audience locally; Keycloak validates it on every Admin API call.
-- Single instance: OAuth state is stored on local disk.
+- The MCP client holds the user's Keycloak token, which also works against the Admin
+  API directly until it expires.
+- MCP clients need a pre-registered client ID (Claude Code: `--client-id`); Keycloak
+  dynamic client registration is not used.
 
 ## Quick Start
 
@@ -95,15 +100,17 @@ installs; use `uv add` to add dependencies and `uv lock --upgrade-package <name>
 to update one. uv manages an ignored environment internally.
 See [uv’s project guide](https://docs.astral.sh/uv/guides/projects/).
 
-## Configure browser OAuth
+## Configure browser sign-in
 
 Register a public OIDC client named **`keycloak-mcp`** in the target Keycloak
 realm. Enable authorization code flow with PKCE `S256`, refresh tokens, and an
 access-token audience mapper that adds the client's own ID (`keycloak-mcp`).
-Disable password grants and service accounts. Register this exact redirect URI:
+Disable password grants and service accounts. MCP clients sign in with this client
+directly, so register their loopback callback, e.g. for Claude Code with
+`--callback-port 9876`:
 
 ```text
-http://localhost:5001/auth/callback
+http://localhost:9876/*
 ```
 
 The [authentication guide](docs/authentication.md) lists every client setting and
@@ -118,59 +125,40 @@ KEYCLOAK_SERVER_URL=https://keycloak.example.com
 KEYCLOAK_REALM=myrealm
 KEYCLOAK_OAUTH_CLIENT_ID=keycloak-mcp
 KEYCLOAK_OAUTH_AUDIENCE=keycloak-mcp
-KEYCLOAK_OAUTH_SIGNING_KEY=<random persistent signing key>
 # KEYCLOAK_CA_BUNDLE=/path/to/trusted-ca-bundle.pem
 ```
 
-The client uses public authorization code flow with PKCE; no Keycloak client
-secret is required. Leave `KEYCLOAK_OAUTH_CLIENT_SECRET` unset. For an existing
-confidential upstream client, supplying that variable selects `client_secret_basic`.
-The signing key below is internal MCP server state, separate from Keycloak credentials.
+No client secret, signing key, database or volume is needed. Remove
+`KEYCLOAK_DEV_ACCESS_TOKEN` if set. The server fails at startup if the configuration
+is incomplete or insecure.
 
-Generate the signing key once with
-`uv run python -c 'import secrets; print(secrets.token_urlsafe(48))'`.
-Keep it private and stable across restarts. Remove `KEYCLOAK_DEV_ACCESS_TOKEN` if set.
-The server fails at startup if OAuth configuration is incomplete. No PostgreSQL
-is required; encrypted OAuth state is stored in the ignored `.keycloak-oauth/` directory.
-
-Start the server with `make local`. The MCP client opens the browser, and the
-user signs in to Keycloak. Their existing Keycloak permissions determine which tools they
-can call; the client registration grants no admin roles. Target URL, realm, and
-OAuth client ID belong to the server configuration. Each user’s identity
-comes from the browser login. See the [authentication guide](docs/authentication.md)
-for the flow, TLS trust, and troubleshooting.
+Start the server with `make local`. The MCP client finds Keycloak through the server's
+protected resource metadata, opens the browser, and the user signs in to Keycloak.
+Their existing Keycloak permissions determine which tools they can call; the client
+registration grants no admin roles. See the [authentication guide](docs/authentication.md)
+for the flow, TLS trust, gateways, and troubleshooting.
 
 ## Use with Codex
 
-With the configured server running:
+HTTP mode needs an MCP client that accepts a pre-registered OAuth client ID. Codex
+registers OAuth clients dynamically, which this server does not support, so run it
+in stdio mode, where the server signs you in itself (see the next section for the
+redirect URI to register):
 
 ```bash
-codex mcp add keycloak --url http://localhost:5001/mcp
-codex mcp login keycloak
+codex mcp add keycloak \
+  --env KEYCLOAK_SERVER_URL=https://keycloak.example.com \
+  --env KEYCLOAK_REALM=myrealm \
+  --env KEYCLOAK_OAUTH_CLIENT_ID=keycloak-mcp \
+  -- uvx keycloak-mcp-server --stdio
 codex mcp list
-codex mcp get keycloak
-codex
 ```
-
-Adding an OAuth server may start login automatically; run `login` if authentication
-is still needed or if the connection was already added with authentication disabled.
-The user approves the MCP connection and completes Keycloak login in the browser.
-No client secret or Keycloak access token goes into the Codex MCP configuration.
 
 Inside a new Codex session, use `/mcp` to check the twenty tools, then ask:
 
 > Use the keycloak MCP server to find who has the realm-admin role.
 
-The CLI saves the connection in `~/.codex/config.toml` by default. Restart existing
-Codex sessions after changing MCP configuration.
 See the [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
-
-Log out or remove the connection:
-
-```bash
-codex mcp logout keycloak
-codex mcp remove keycloak
-```
 
 ## Use with Claude Code: stdio, no server to run
 
@@ -191,7 +179,7 @@ claude mcp add --scope user keycloak \
   -- uvx keycloak-mcp-server --stdio
 ```
 
-No signing key or OAuth proxy settings are needed in this mode. It is for one person
+No server settings beyond these are needed in this mode. It is for one person
 on their own machine; to share one server between users, use HTTP mode below. Set
 `KEYCLOAK_LOGIN_PORT` (and register that port's `/callback`) if 8250 is taken. To sign
 out, delete the cache file.
@@ -199,16 +187,17 @@ out, delete the cache file.
 ## Use with Claude Code: HTTP
 
 ```bash
-claude mcp add --transport http --scope user keycloak http://localhost:5001/mcp
-claude mcp login keycloak
+claude mcp add --transport http --scope user \
+  --client-id keycloak-mcp --callback-port 9876 \
+  keycloak http://localhost:5001/mcp
 claude mcp list
-claude mcp get keycloak
 claude
 ```
 
-In Claude, `/mcp` shows connection status and offers authentication. Use it if
-an older Claude CLI does not have `mcp login`. The `user` scope makes the connection
-available across projects. Start a new Claude session after changing the configuration.
+In Claude, `/mcp` shows connection status and starts the browser sign-in. The
+callback port must match a redirect URI on the `keycloak-mcp` client. The `user`
+scope makes the connection available across projects. Start a new Claude session
+after changing the configuration.
 See the [official Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 
 Log out or remove the connection:
@@ -219,8 +208,8 @@ claude mcp remove --scope user keycloak
 ```
 
 Removing a connection does not stop the server. Press `Ctrl+C` in its terminal to
-stop it. With `ENABLE_AUTH=False`, discovery works without login, but browser OAuth
-routes are absent. Use [the direct client](docs/keycloak-tools.md) to test the protocol
+stop it. With `ENABLE_AUTH=False`, discovery works without login, but there is no
+browser sign-in. Use [the direct client](docs/keycloak-tools.md) to test the protocol
 without an LLM.
 
 ## Configuration
@@ -233,14 +222,13 @@ without an LLM.
 | `MCP_SSL_KEYFILE`           | `None`      | SSL private key file path                                            |
 | `MCP_SSL_CERTFILE`          | `None`      | SSL certificate file path                                            |
 | `ENABLE_AUTH`               | `False`*    | Enable OAuth authentication (see [Auth Guide](docs/authentication.md)) |
-| `MCP_HOST_ENDPOINT` | `http://localhost:5001` | Public OAuth origin, without `/mcp` |
+| `MCP_HOST_ENDPOINT` | `http://localhost:5001` | Public origin MCP clients reach, without `/mcp` |
 | `KEYCLOAK_SERVER_URL` | Unset | Keycloak base URL, including `/auth` when used |
 | `KEYCLOAK_REALM` | Unset | Target realm, e.g. `myrealm` |
-| `KEYCLOAK_OAUTH_CLIENT_ID` | Unset | Registered public Keycloak client with PKCE |
-| `KEYCLOAK_OAUTH_CLIENT_SECRET` | Unset | Optional; only set for a confidential upstream client |
-| `KEYCLOAK_OAUTH_SIGNING_KEY` | Unset | Persistent random key of at least 32 characters |
+| `KEYCLOAK_OAUTH_CLIENT_ID` | Unset | Public Keycloak client users sign in with (required `azp`) |
 | `KEYCLOAK_OAUTH_AUDIENCE` | `keycloak-mcp` | Required `aud` claim; add an audience mapper for it |
 | `KEYCLOAK_TRUSTED_EXCHANGERS` | `[]` | HTTP mode: gateway clients whose RFC 8693 exchanged tokens are accepted, e.g. `["mcp-context-forge"]` |
+| `KEYCLOAK_CA_BUNDLE` | Unset | PEM bundle for a private Keycloak certificate issuer |
 | `KEYCLOAK_LOGIN_PORT` | `8250` | stdio mode: loopback port for the sign-in callback |
 | `KEYCLOAK_TOKEN_CACHE_DIR` | `~/.cache/keycloak-mcp-server` | stdio mode: token cache directory |
 | `PYTHON_LOG_LEVEL`          | `INFO`      | Logging level                                                        |
@@ -295,14 +283,14 @@ contributor docs all come from their work.
 
 - **Removed** the example tools (multiply, code review prompt, logo), the template's
   own OAuth server with PostgreSQL token storage, and their settings and tests.
-- **Added** Keycloak per-user authentication: the FastMCP OAuth proxy with
-  Keycloak-specific token verification for HTTP mode, and a built-in browser sign-in
-  (PKCE, loopback callback, token cache) for stdio mode.
+- **Added** Keycloak per-user authentication: stateless Keycloak token verification
+  (RFC 9728 resource server, optional RFC 8693 gateway tokens) for HTTP mode, and a
+  built-in browser sign-in (PKCE, loopback callback, token cache) for stdio mode.
 - **Added** twenty read-only Keycloak Admin API tools, run with the signed-in user's token.
 - **Updated** to FastMCP 4, uv with a committed lockfile, dependency ranges for
   `uvx`/`pip` installs, and Python 3.12–3.14.
 - **Updated** the container, Compose and OpenShift manifests for Keycloak settings
-  and persistent OAuth state, and CI for Node 24 actions and PyPI trusted publishing.
+  and CI for Node 24 actions and PyPI trusted publishing.
 - **Renamed** the package to `keycloak_mcp_server` and rewrote the docs for Keycloak.
 
 ## License

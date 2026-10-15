@@ -97,8 +97,8 @@ def main() -> None:
             run_stdio()
             return
 
-        # Imported here: building the HTTP app also builds the OAuth proxy,
-        # which stdio mode neither needs nor has settings for.
+        # Imported here: building the HTTP app also builds the Keycloak token
+        # verification, which stdio mode neither needs nor has settings for.
         from keycloak_mcp_server.src.api import app
 
         uvicorn_config: dict[str, Any] = {}
@@ -131,7 +131,7 @@ def run_stdio() -> None:
     """Serve MCP over stdin/stdout for a client that launches this process."""
     from keycloak_mcp_server.src.mcp import KeycloakMCPServer
 
-    # No HTTP OAuth proxy: tools sign the local user in through the browser.
+    # No HTTP sign-in: tools sign the local user in through the browser.
     KeycloakMCPServer(auth=None).mcp.run(transport="stdio", show_banner=False)
 
 

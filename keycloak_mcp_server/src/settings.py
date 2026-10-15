@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     KEYCLOAK_TIMEOUT: int = Field(default=30, ge=1, le=60)
     KEYCLOAK_CA_BUNDLE: Optional[str] = None
     KEYCLOAK_DEV_ACCESS_TOKEN: Optional[SecretStr] = None
+    # The public Keycloak client users sign in with (the `azp` of accepted
+    # sign-in tokens). MCP clients use it directly in HTTP mode, as does the
+    # server itself in stdio mode.
     KEYCLOAK_OAUTH_CLIENT_ID: str = ""
     KEYCLOAK_OAUTH_AUDIENCE: str = "keycloak-mcp"
     # HTTP mode: Keycloak clients (e.g. an MCP gateway) whose RFC 8693

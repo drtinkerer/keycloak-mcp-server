@@ -4,8 +4,6 @@ resources:
   - buildconfig.yaml
   - imagestream.yaml
   - configmap.yaml
-  - secret.yaml
-  - pvc.yaml
   - deployment.yaml
   - service.yaml
   - route.yaml

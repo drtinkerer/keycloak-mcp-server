@@ -11,12 +11,13 @@ data:
   MCP_TRANSPORT_PROTOCOL: "http"
   ENVIRONMENT: "production"
   ENABLE_AUTH: "true"
-  # Public HTTPS origin of this server (the Route host); also register
-  # <MCP_HOST_ENDPOINT>/auth/callback as the client's redirect URI.
+  # Public HTTPS origin of this server (the Route host), without /mcp.
   MCP_HOST_ENDPOINT: "https://keycloak-mcp.example.com"
   KEYCLOAK_SERVER_URL: "https://keycloak.example.com"
   KEYCLOAK_REALM: "myrealm"
   KEYCLOAK_OAUTH_CLIENT_ID: "keycloak-mcp"
   KEYCLOAK_OAUTH_AUDIENCE: "keycloak-mcp"
-  KEYCLOAK_OAUTH_SCOPES: "openid profile email"
-  KEYCLOAK_OAUTH_STORAGE_DIR: "/data/keycloak-oauth"
+  # Gateways allowed to send RFC 8693 exchanged tokens, e.g. ContextForge:
+  # KEYCLOAK_TRUSTED_EXCHANGERS: '["mcp-context-forge"]'
+  # PEM bundle for a private Keycloak CA, e.g. mounted from a ConfigMap:
+  # KEYCLOAK_CA_BUNDLE: "/etc/pki/keycloak/ca.pem"
