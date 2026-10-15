@@ -39,6 +39,8 @@ def oauth_env(tmp_path, monkeypatch):
         KEYCLOAK_REALM="employees",
         KEYCLOAK_OAUTH_CLIENT_ID="keycloak-mcp",
         KEYCLOAK_OAUTH_AUDIENCE="keycloak-mcp",
+        # Pinned so a developer's .env cannot change which paths are tested.
+        KEYCLOAK_TRUSTED_EXCHANGERS=[],
         KEYCLOAK_CA_BUNDLE=None,
         KEYCLOAK_DEV_ACCESS_TOKEN=None,
         MCP_HOST_ENDPOINT="http://localhost:5001",

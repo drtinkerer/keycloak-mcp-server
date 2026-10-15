@@ -186,7 +186,7 @@ async def search_users(
     first: Offset = 0,
     max_results: PageSize = 20,
 ) -> dict[str, Any]:
-    """Search users in the configured Keycloak realm. Use search for free text OR username/email filters; exact applies to username/email. Returns one page, excluding credentials and custom attributes."""
+    """Search users in the configured Keycloak realm. Use search for free text OR username/email filters. exact applies to username/email only. Returns one page, excluding credentials and custom attributes."""
     from fastmcp.exceptions import ToolError
 
     if search is not None and (username is not None or email is not None):
@@ -362,7 +362,7 @@ async def list_client_scopes() -> dict[str, Any]:
 async def get_user_role_mappings(
     user_id: ResourceID, client_id: Search = None
 ) -> dict[str, Any]:
-    """Explain a user's roles. 'direct' are roles assigned to the user itself; 'effective_realm_roles' also include roles inherited from groups and composites. Pass client_id to also get the effective roles of that client (e.g. realm-management). Requires the internal user ID from search_users."""
+    """Explain a user's roles. 'direct' are roles assigned to the user itself. 'effective_realm_roles' also include roles inherited from groups and composites. Pass client_id to also get the effective roles of that client (e.g. realm-management). Requires the internal user ID from search_users."""
     async with get_keycloak_service() as service:
         direct = await service.get_json("users", user_id, "role-mappings", expect=dict)
         effective_realm = await service.get_json(
@@ -384,7 +384,7 @@ async def get_user_role_mappings(
 
 
 async def get_group_role_mappings(group_id: ResourceID) -> dict[str, Any]:
-    """List the realm and client roles assigned to a group; every member inherits them. Requires the internal group ID from list_groups."""
+    """List the realm and client roles assigned to a group. Every member inherits them. Requires the internal group ID from list_groups."""
     async with get_keycloak_service() as service:
         mappings = await service.get_json(
             "groups", group_id, "role-mappings", expect=dict
@@ -408,7 +408,7 @@ async def find_users_with_role(
     first: Offset = 0,
     max_results: PageSize = 20,
 ) -> dict[str, Any]:
-    """Find who holds a role: users assigned it directly, and groups assigned it (their members inherit it; use list_group_members). Pass client_id for a client role, e.g. role_name=realm-admin, client_id=realm-management."""
+    """Find who holds a role: users assigned it directly, and groups assigned it (their members inherit it, see list_group_members). Pass client_id for a client role, e.g. role_name=realm-admin, client_id=realm-management."""
     query = pagination(first, max_results)
     async with get_keycloak_service() as service:
         if client_id is None:
@@ -437,7 +437,7 @@ async def list_events(
     first: Offset = 0,
     max_results: PageSize = 20,
 ) -> dict[str, Any]:
-    """List recent login events, newest first, e.g. event_types=["LOGIN_ERROR"] to see why sign-ins fail (error and reason are in details). Filter by clientId, internal user ID, or date range. Empty unless the realm saves events (Realm settings -> Events)."""
+    """List recent login events, newest first, e.g. event_types=["LOGIN_ERROR"] to see why sign-ins fail (error and reason are in details). Filter by clientId, internal user ID, or date range. Empty unless the realm saves events (Realm settings, Events tab)."""
     query = {
         **pagination(first, max_results),
         "type": event_types,
