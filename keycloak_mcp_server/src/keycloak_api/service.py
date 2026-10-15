@@ -146,12 +146,10 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
         token = await get_local_login().access_token()
     elif settings.ENABLE_AUTH:
         access = get_access_token()
-        if access is None or not access.claims.get("keycloak_admin_token"):
+        if access is None:
             raise ToolError(
                 "Sign in through your MCP client before calling Keycloak tools."
             )
-        # OAuthProxy has already validated the MCP token and resolved it to the
-        # stored, verified Keycloak token. Never forward the inbound MCP bearer token.
         token = access.token
     else:
         token = _user_access_token.get()

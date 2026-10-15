@@ -155,7 +155,3 @@ class TestAPI:
 
         # All should work without errors
         assert True
-
-
-class TestRegisterEndpointRoute:
-    """Test the /auth/register route coverage."""
