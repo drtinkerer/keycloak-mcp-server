@@ -8,13 +8,42 @@ from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
 
 from keycloak_mcp_server.src.settings import settings
-from keycloak_mcp_server.src.tools.keycloak_tools import KEYCLOAK_TOOLS
+from keycloak_mcp_server.src.tools.keycloak_tools import (
+    find_users_with_role,
+    get_client,
+    get_group_role_mappings,
+    get_ldap_federation,
+    get_realm_info,
+    get_user,
+    get_user_groups,
+    get_user_role_mappings,
+    list_admin_events,
+    list_client_protocol_mappers,
+    list_client_scopes,
+    list_client_sessions,
+    list_clients,
+    list_events,
+    list_group_members,
+    list_groups,
+    list_realm_roles,
+    list_user_sessions,
+    preview_access_token,
+    search_users,
+)
 from keycloak_mcp_server.utils.pylogger import (
     force_reconfigure_all_loggers,
     get_python_logger,
 )
 
 logger = get_python_logger()
+
+# Every tool only reads from the Keycloak Admin API.
+READ_ONLY = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
 
 
 class KeycloakMCPServer:
@@ -42,13 +71,29 @@ class KeycloakMCPServer:
             raise
 
     def _register_mcp_tools(self) -> None:
-        """Register only the read-only Keycloak Admin API tools."""
-        for tool in KEYCLOAK_TOOLS:
-            self.mcp.tool(
-                annotations={
-                    "readOnlyHint": True,
-                    "destructiveHint": False,
-                    "idempotentHint": True,
-                    "openWorldHint": False,
-                }
-            )(tool)
+        """Register the read-only Keycloak Admin API tools.
+
+        Listed one by one rather than in a loop so that tools stay visible to
+        static analysis (registries and scanners read them from the source).
+        tests/test_keycloak.py checks this list matches KEYCLOAK_TOOLS.
+        """
+        self.mcp.tool(get_realm_info, annotations=READ_ONLY)
+        self.mcp.tool(search_users, annotations=READ_ONLY)
+        self.mcp.tool(get_user, annotations=READ_ONLY)
+        self.mcp.tool(get_user_groups, annotations=READ_ONLY)
+        self.mcp.tool(list_groups, annotations=READ_ONLY)
+        self.mcp.tool(list_clients, annotations=READ_ONLY)
+        self.mcp.tool(list_realm_roles, annotations=READ_ONLY)
+        self.mcp.tool(get_client, annotations=READ_ONLY)
+        self.mcp.tool(list_client_protocol_mappers, annotations=READ_ONLY)
+        self.mcp.tool(list_client_scopes, annotations=READ_ONLY)
+        self.mcp.tool(get_user_role_mappings, annotations=READ_ONLY)
+        self.mcp.tool(get_group_role_mappings, annotations=READ_ONLY)
+        self.mcp.tool(list_group_members, annotations=READ_ONLY)
+        self.mcp.tool(find_users_with_role, annotations=READ_ONLY)
+        self.mcp.tool(list_events, annotations=READ_ONLY)
+        self.mcp.tool(list_admin_events, annotations=READ_ONLY)
+        self.mcp.tool(list_user_sessions, annotations=READ_ONLY)
+        self.mcp.tool(list_client_sessions, annotations=READ_ONLY)
+        self.mcp.tool(preview_access_token, annotations=READ_ONLY)
+        self.mcp.tool(get_ldap_federation, annotations=READ_ONLY)
