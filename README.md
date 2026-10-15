@@ -1,10 +1,11 @@
 # Keycloak MCP Server
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12,3.13-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%20|%203.13%20|%203.14-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://github.com/drtinkerer/keycloak-mcp-server/actions/workflows/test.yml/badge.svg)](https://github.com/drtinkerer/keycloak-mcp-server/actions/workflows/test.yml)
 [![Coverage](https://codecov.io/gh/drtinkerer/keycloak-mcp-server/branch/main/graph/badge.svg)](https://codecov.io/gh/drtinkerer/keycloak-mcp-server)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/drtinkerer/keycloak-mcp-server)
+[![M8ven Score](https://m8ven.ai/badge/mcp/drtinkerer-keycloak-mcp-server-cbzxll?v=2fcfb8e724b3bb231a1f025ca32a655d)](https://m8ven.ai/mcp/drtinkerer-keycloak-mcp-server-cbzxll?s=readme)
 
 An MCP server for the Keycloak Admin REST API where **every call runs as the
 signed-in user**. Users log in to Keycloak from their MCP client (Claude Code,
