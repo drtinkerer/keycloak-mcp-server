@@ -7,7 +7,7 @@ packages = ["keycloak_mcp_server"]
 
 [project]
 name = "keycloak-mcp-server"
-version = "0.1.2"
+version = "0.1.3"
 description = "Keycloak MCP server that calls the Admin API as the signed-in user, via OAuth"
 readme = "README.md"
 license = {text = "Apache-2.0"}

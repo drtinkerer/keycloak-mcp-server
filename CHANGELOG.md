@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-server/releases) for detailed changelogs. Release notes are auto-generated from merged pull request titles and labels.
 
+## [0.1.3] - 2026-10-15
+
+### Changed
+
+- Tools are registered one by one instead of in a loop, so registries that read
+  tools from the source (static analysis) list all twenty. No behaviour change.
+
 ## [0.1.2] - 2026-10-13
 
 ### Added
