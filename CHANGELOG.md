@@ -21,6 +21,13 @@ This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-s
   OpenShift manifests drop the PVC and signing-key secret and use rolling updates.
 - Gateway token exchange (`KEYCLOAK_TRUSTED_EXCHANGERS`) is unchanged.
 
+### Fixed
+
+- Tool descriptions no longer contain `;` or `> `. Gateways that forbid such
+  patterns (ContextForge `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS`) silently skipped
+  `search_users`, `get_user_role_mappings`, `get_group_role_mappings`,
+  `find_users_with_role` and `list_events`.
+
 ## [0.1.3] - 2026-10-15
 
 ### Changed
