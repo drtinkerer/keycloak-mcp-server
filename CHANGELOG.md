@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-server/releases) for detailed changelogs. Release notes are auto-generated from merged pull request titles and labels.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** HTTP mode is stateless. The FastMCP OAuth proxy is replaced by a
+  resource server: RFC 9728 metadata points MCP clients to the Keycloak realm, users
+  sign in to Keycloak directly in the browser, and each request's Keycloak access token
+  is verified against the realm's JWKS (issuer, audience, `azp`, `typ`, expiry,
+  `openid`). No tokens, signing key, or volume are stored, so replicas can scale out.
+  MCP clients need a pre-registered client ID (Claude Code: `--client-id keycloak-mcp
+  --callback-port <port>`), and their loopback callback must be a redirect URI on the
+  Keycloak client. Existing users sign in again once.
+- Removed `KEYCLOAK_OAUTH_SIGNING_KEY`, `KEYCLOAK_OAUTH_STORAGE_DIR`,
+  `KEYCLOAK_OAUTH_CLIENT_SECRET` and `KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS`; the
+  OpenShift manifests drop the PVC and signing-key secret and use rolling updates.
+- Gateway token exchange (`KEYCLOAK_TRUSTED_EXCHANGERS`) is unchanged.
+
+### Fixed
+
+- Tool descriptions no longer contain `;` or `> `. Gateways that forbid such
+  patterns (ContextForge `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS`) silently skipped
+  `search_users`, `get_user_role_mappings`, `get_group_role_mappings`,
+  `find_users_with_role` and `list_events`.
+
 ## [0.1.3] - 2026-10-15
 
 ### Changed

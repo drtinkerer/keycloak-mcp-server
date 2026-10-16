@@ -1,4 +1,4 @@
-# Browser OAuth with Keycloak
+# Browser sign-in with Keycloak
 
 Two modes, both using each user's own Keycloak token:
 
@@ -6,47 +6,50 @@ Two modes, both using each user's own Keycloak token:
   the server signs its one local user in through the browser itself (RFC 8252 native-app
   flow: PKCE S256, random state, callback on `127.0.0.1`). Tokens are cached in a `0600`
   file and refreshed. See the [README](../README.md#use-with-claude-code-stdio-no-server-to-run).
-- **HTTP** (the rest of this guide): one server for many users, through the FastMCP OAuth proxy.
+- **HTTP** (the rest of this guide): one stateless server for many users. Keycloak is the
+  authorization server; this server only validates the tokens it issues.
 
-Codex, Claude Code, and the direct FastMCP client can authenticate users in their
-browser. The server uses FastMCP’s OAuth proxy and keeps each user’s Keycloak tokens
-separate. Configure the target and client once on the server; users provide their
-identity through their MCP client’s login flow.
+In HTTP mode the server is an OAuth resource server. It publishes
+[RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) protected resource metadata naming
+your Keycloak realm, so the MCP client signs the user in to Keycloak directly in the
+browser and sends the Keycloak access token with each request. The server stores
+nothing: no tokens, sessions, or signing keys, so any number of replicas can serve the
+same users.
 
 ## Flow
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Agent as Codex / Claude / FastMCP
-    participant MCP as Keycloak MCP OAuth proxy
+    participant Agent as Claude Code / MCP client
+    participant MCP as Keycloak MCP
     participant Keycloak
-    Agent->>MCP: Discover OAuth and register MCP client
+    Agent->>MCP: Call /mcp without a token
+    MCP->>Agent: 401 with resource_metadata URL
+    Agent->>MCP: GET /.well-known/oauth-protected-resource/mcp
+    MCP->>Agent: Authorization server: the Keycloak realm
     Agent->>User: Open browser
-    User->>MCP: Approve connection
-    MCP->>Keycloak: Authorization code login with PKCE
     User->>Keycloak: Sign in (existing SSO session may be reused)
-    Keycloak->>MCP: Code at /auth/callback
-    MCP->>Keycloak: Exchange code using public client + PKCE
-    Keycloak->>MCP: User access and refresh tokens
-    MCP->>Agent: Separate MCP authorization code
-    Agent->>MCP: Redeem code with PKCE
-    MCP->>Agent: MCP access and refresh tokens
-    Agent->>MCP: Call tool with MCP access token
-    MCP->>MCP: Validate MCP token and associated Keycloak user token
+    Keycloak->>Agent: Code at the client's loopback callback
+    Agent->>Keycloak: Exchange code with PKCE (public client keycloak-mcp)
+    Keycloak->>Agent: User access and refresh tokens
+    Agent->>MCP: Call tool with the Keycloak access token
+    MCP->>MCP: Verify signature (JWKS), issuer, audience, azp, typ, expiry, openid
     MCP->>Keycloak: Admin API GET as this user
     Keycloak->>Agent: Selected results through MCP
 ```
 
-The proxy issues tokens for the MCP resource and stores the upstream user tokens
-encrypted on disk. Tools receive the verified upstream token from the current
-request’s authentication context. Sending a raw Keycloak token directly to `/mcp` is
-rejected. The SDK does not log in as a service account or retry with another identity.
-Standard Keycloak token exchange is not required for this flow.
+The MCP client refreshes the token with Keycloak itself. The server never logs in as
+a service account or retries with another identity.
+
+The MCP client holds the Keycloak access token, and the server sends that same token
+to the Admin API. A copy of it can therefore be used against the Admin API directly,
+with the user's own permissions, until it expires. Keep access-token lifetimes short
+and grant users only the `realm-management` roles they need.
 
 ## Register the Keycloak client
 
-Use client ID `keycloak-mcp`, display name `Keycloak MCP`:
+MCP clients sign in with one pre-registered public client, `keycloak-mcp`:
 
 | Setting | Value |
 | --- | --- |
@@ -55,7 +58,7 @@ Use client ID `keycloak-mcp`, display name `Keycloak MCP`:
 | PKCE method | S256 |
 | Refresh tokens | Enabled |
 | Implicit flow, direct access grants, service accounts | Disabled |
-| Valid redirect URIs | `http://localhost:5001/auth/callback` (HTTP mode), `http://127.0.0.1:8250/callback` (stdio mode) |
+| Valid redirect URIs | `http://localhost:9876/*` (Claude Code's `--callback-port`), `http://127.0.0.1:8250/callback` (stdio mode) |
 | Default client scopes | `profile`, `email`, `roles` |
 | Access-token audience mapper | `keycloak-mcp`, the client's own ID (access token only) |
 
@@ -75,8 +78,8 @@ resource "keycloak_openid_client" "keycloak_mcp" {
   full_scope_allowed           = true
 
   valid_redirect_uris = [
-    "http://localhost:5001/auth/callback", # HTTP mode: the server's OAuth proxy
-    "http://127.0.0.1:8250/callback",      # stdio mode: the server signs you in itself
+    "http://localhost:9876/*",        # HTTP mode: Claude Code --callback-port 9876
+    "http://127.0.0.1:8250/callback", # stdio mode: the server signs you in itself
   ]
 }
 
@@ -91,14 +94,16 @@ resource "keycloak_openid_audience_protocol_mapper" "keycloak_mcp_audience" {
 }
 ```
 
-No client secret is required.
+No client secret is required. The redirect URIs are the MCP clients' own loopback
+callbacks, so each MCP client must use a fixed callback port that is registered here.
 
-The Keycloak callback is the fixed **proxy** callback above. Codex and Claude callbacks
-use random loopback ports; they register with the proxy, not directly with Keycloak.
-The default proxy allowlist accepts `http://localhost:*/*` and
-`http://127.0.0.1:*/*`. For other MCP clients, configure an explicit
-`KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS` JSON list. Remote deployments require HTTPS and
-an updated exact Keycloak callback URI.
+Keep the audience mapper on this client, not on a realm default client scope: a
+default-scope mapper would put `keycloak-mcp` into every client's tokens.
+
+MCP clients that cannot be given a client ID try Keycloak's dynamic client registration
+instead. Keycloak's default anonymous-registration policy (trusted hosts) usually
+refuses it, and a self-registered client would not get the audience mapper above, so
+use clients that accept a pre-registered client ID.
 
 Full scope allowed forwards the user’s existing role mappings into the token.
 The client assigns no roles. The MCP tools perform GET requests only, but the user token
@@ -116,38 +121,19 @@ MCP_HOST_ENDPOINT=http://localhost:5001
 KEYCLOAK_SERVER_URL=https://keycloak.example.com
 KEYCLOAK_REALM=myrealm
 KEYCLOAK_OAUTH_CLIENT_ID=keycloak-mcp
-KEYCLOAK_OAUTH_SIGNING_KEY=<persistent random key>
 KEYCLOAK_OAUTH_AUDIENCE=keycloak-mcp
-KEYCLOAK_OAUTH_SCOPES="openid profile email"
-KEYCLOAK_OAUTH_STORAGE_DIR=.keycloak-oauth
 # KEYCLOAK_CA_BUNDLE=/path/to/trusted-ca-bundle.pem
 ```
 
-Leave `KEYCLOAK_OAUTH_CLIENT_SECRET` unset for a public client. The proxy sends
-`client_id` and the PKCE verifier to Keycloak without client authentication. Refresh
-requests also contain no client secret. Supplying `KEYCLOAK_OAUTH_CLIENT_SECRET` selects
-`client_secret_basic` for confidential upstream clients; it does not change PKCE.
+`MCP_HOST_ENDPOINT` is the public origin MCP clients reach, without `/mcp`; it becomes the
+`resource` in the protected resource metadata. Remove `KEYCLOAK_DEV_ACCESS_TOKEN`; the MCP
+client opens the browser. Startup rejects missing configuration, an empty audience, a
+non-HTTPS Keycloak URL, or an insecure non-loopback HTTP origin. No database or
+persistent storage is required.
 
-Generate the internal MCP signing key once:
-
-```bash
-uv run python -c 'import secrets; print(secrets.token_urlsafe(48))'
-```
-
-Keep the key private and stable. It signs MCP tokens and derives the storage
-encryption key. Losing or changing it invalidates existing sessions and prevents
-reading old encrypted state. Keep `.env` and `.keycloak-oauth/` out of version control.
-The storage directory is created with mode `0700`. This configuration is for a
-single server instance with persistent local storage; replicas need a shared store
-and shared signing key before deployment.
-
-Remove `KEYCLOAK_DEV_ACCESS_TOKEN`; the MCP client opens the browser. Startup rejects missing configuration or an insecure
-non-loopback HTTP origin. No database is required.
-
-TLS verification is enabled for authorization-code exchange, refresh, JWKS lookup,
-and Admin API requests. If the system does not trust your Keycloak's certificate
-issuer (for example a private CA), set `KEYCLOAK_CA_BUNDLE` to a PEM bundle containing
-the trusted issuer certificates.
+TLS verification is enabled for JWKS lookup and Admin API requests. If the system does
+not trust your Keycloak's certificate issuer (for example a private CA), set
+`KEYCLOAK_CA_BUNDLE` to a PEM bundle containing the trusted issuer certificates.
 
 Your realm's discovery document is:
 
@@ -160,65 +146,92 @@ or an OIDC endpoint. Current Keycloak serves realms at the root; legacy WildFly
 distributions and some deployments add an `/auth` context path, which must then be
 part of the base URL.
 
-Restart with `make local`, then follow the [Codex or Claude commands](../README.md)
-or run the direct client:
+Restart with `make local`, then follow the [Claude Code commands](../README.md#use-with-claude-code-http).
 
-```bash
-uv run python examples/keycloak_client.py --oauth --username alice
-```
+## Validation
 
-## Validation and renewal
+Every request's token is verified locally: RS256 signature against the realm’s JWKS,
+issuer, audience (`KEYCLOAK_OAUTH_AUDIENCE`), authorized party
+(`azp` = `KEYCLOAK_OAUTH_CLIENT_ID`), access-token type (`typ=Bearer`), subject, expiry,
+not-before, and the `openid` scope. Tokens other clients of the realm obtained are
+refused even if they carry this server's audience. Realm logout or revocation is not
+checked by introspection on every call and takes effect at token expiry.
 
-Upstream JWT verification checks RS256 signatures using the realm’s JWKS, issuer,
-audience, authorized party (`azp=keycloak-mcp`), access-token type (`typ=Bearer`),
-subject, expiry, not-before, and the `openid` scope. The proxy validates MCP tokens
-separately. It enforces PKCE, one-use authorization codes, consent, and a callback
-bound to the browser that approved the connection.
-
-The MCP client requests refreshes. The proxy refreshes the associated Keycloak user
-token and issues replacement MCP credentials. Rejected/expired upstream credentials
-require signing in again. JWT validation is local; realm logout/revocation is not
-checked by introspection on every call and may take effect at token expiry.
-
-`tests/test_keycloak_oauth.py` exercises the full flow against simulated Keycloak endpoints:
-public and confidential registration, browser consent and callback, PKCE failure, code replay, two concurrent
-user identities, permissions, refresh, encrypted storage, invalid JWT claims, and
-rejection of raw upstream tokens. This does not replace a live browser login test.
+`tests/test_keycloak_oauth.py` sends real signed tokens through the HTTP app against
+simulated Keycloak endpoints: protected resource metadata, two concurrent user
+identities, permissions, invalid claims, untrusted clients, token exchange, startup
+validation, and CA trust. This does not replace a live browser login test.
 
 ## Gateways and token exchange (RFC 8693)
 
 An MCP gateway such as [ContextForge](https://github.com/IBM/mcp-context-forge) can sign
-users in once and exchange their Keycloak token for one addressed to this server, so
-users do not log in to each MCP server separately. Allow the gateway's Keycloak client:
+users in to Keycloak with the same browser flow and exchange their token for one
+addressed to this server, so users sign in once for every server behind the gateway.
+Allow the gateway's Keycloak client:
 
 ```dotenv
 KEYCLOAK_TRUSTED_EXCHANGERS=["mcp-context-forge"]
 ```
 
-The server then accepts, next to its own OAuth proxy tokens, Keycloak access tokens
-that are signed by the realm, include `KEYCLOAK_OAUTH_AUDIENCE` in `aud`, and have
-one of these clients as `azp` (after a standard token exchange, `azp` is the client
-that performed it). The token is forwarded to the Admin API unchanged, so Keycloak
-still authorizes the original user. Tokens issued to this server's own client are
-not accepted on this path, so a plain sign-in token cannot bypass the proxy. The
-exchanged token must carry the user's `realm-management` roles for Admin API calls
-to succeed; check the exchanging client's role scope if tools return permission errors.
+The server then also accepts Keycloak access tokens that are signed by the realm,
+include `KEYCLOAK_OAUTH_AUDIENCE` in `aud`, and have one of these clients as `azp`
+(after a standard token exchange, `azp` is the client that performed it). The token is
+forwarded to the Admin API unchanged, so Keycloak still authorizes the original user.
+`KEYCLOAK_OAUTH_CLIENT_ID` may not be listed as an exchanger.
+
+On the Keycloak side:
+
+- The client users sign in to the gateway with must put the gateway's client ID in
+  `aud`; standard token exchange requires the exchanging client in the subject token's
+  audience.
+- The gateway's client is confidential, with standard token exchange enabled.
+- An optional client scope on the gateway's client adds `keycloak-mcp` to `aud`; the
+  gateway requests it during the exchange.
+
+A ContextForge gateway entry for this server:
+
+```json
+{
+  "name": "keycloak-mcp",
+  "url": "https://keycloak-mcp.example.com/mcp",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "token-exchange",
+    "token_url": "https://keycloak.example.com/realms/myrealm/protocol/openid-connect/token",
+    "client_id": "mcp-context-forge",
+    "client_secret": "<secret>",
+    "target_audience": "keycloak-mcp",
+    "scopes": ["exchange-keycloak-mcp"]
+  }
+}
+```
+
+ContextForge exchanges the bearer token it received, so the MCP client must reach
+ContextForge with a Keycloak access token: enable OAuth on the ContextForge virtual
+server, with the Keycloak realm as its authorization server and the gateway's client ID
+as its expected audience.
+
+The exchanged token must carry the user's `realm-management` roles for Admin API calls
+to succeed. Decode one exchanged token and check `resource_access.realm-management`; if
+tools return permission errors, check the exchanging client's role scope and the
+audiences the exchange requests.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| Startup lists missing `KEYCLOAK_*` values | Complete the server’s private OAuth settings |
-| No browser login/discovery | Check `ENABLE_AUTH=True`, restart server, then run the MCP client’s login command |
-| `invalid_client` during login | Verify the client exists in the realm, the client ID matches, and client authentication is disabled; leave the local client secret unset |
-| Invalid redirect URI | Register exactly `http://localhost:5001/auth/callback` in Keycloak |
+| Startup lists missing `KEYCLOAK_*` values | Complete the server’s Keycloak settings |
+| No browser login/discovery | Check `ENABLE_AUTH=True`, restart the server, and add the server with `--client-id` and `--callback-port` |
+| Keycloak asks to register a client, or registration fails | The MCP client was not given a client ID; see [Register the Keycloak client](#register-the-keycloak-client) |
+| `invalid_client` during login | Verify the client exists in the realm, the client ID matches, and client authentication is disabled |
+| Invalid redirect URI | Register the MCP client's callback, e.g. `http://localhost:9876/*` for `--callback-port 9876` |
 | Certificate verification failure | Configure the trusted CA bundle; keep verification enabled |
-| Login succeeds but MCP reports authentication failure | Check the audience mapper matches `KEYCLOAK_OAUTH_AUDIENCE`, and the realm, scopes, and client ID |
+| Login succeeds but MCP reports 401 | Check the audience mapper matches `KEYCLOAK_OAUTH_AUDIENCE`, the client ID matches `KEYCLOAK_OAUTH_CLIENT_ID`, and the token has the `openid` scope |
 | Tool reports missing permissions | Grant appropriate permissions to the user through normal Keycloak administration |
 
-`ENABLE_AUTH=False` exposes discovery/tools without MCP authentication and no OAuth
-endpoints. An optional localhost-only development token is described in
-[Keycloak tools](keycloak-tools.md). Cursor compatibility flags do not relax the new proxy’s PKCE checks.
+`ENABLE_AUTH=False` exposes discovery/tools without MCP authentication and no protected
+resource metadata. An optional localhost-only development token is described in
+[Keycloak tools](keycloak-tools.md).
 
 References: [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization),
-[FastMCP OAuth proxy](https://gofastmcp.com/servers/auth/oauth-proxy).
+[FastMCP Keycloak provider](https://gofastmcp.com/integrations/keycloak).

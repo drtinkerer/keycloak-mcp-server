@@ -14,7 +14,7 @@ Discover the Keycloak tools with MCP authentication disabled:
 uv run python examples/keycloak_client.py --list-only
 ```
 
-After [configuring browser OAuth](../docs/authentication.md), use the direct
+After [configuring browser sign-in](../docs/authentication.md), use the direct
 client to log in and test without an LLM:
 
 ```bash
@@ -22,7 +22,7 @@ uv run python examples/keycloak_client.py --oauth --username alice
 ```
 
 The simple `fastmcp_client.py` and LangGraph examples assume MCP authentication
-is disabled; use `keycloak_client.py --oauth`, Codex, or Claude for browser OAuth.
+is disabled; use `keycloak_client.py --oauth` or Claude Code for browser sign-in.
 
 ## 🚀 **Quick Start**
 

@@ -11,16 +11,9 @@ services:
     environment:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=5001
-    volumes:
-      # Encrypted per-user OAuth state; losing it signs everyone out.
-      - keycloak_oauth:/app/.keycloak-oauth
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 5s
       timeout: 5s
       retries: 5
-
-volumes:
-  keycloak_oauth:
-    driver: local

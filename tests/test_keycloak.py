@@ -467,3 +467,13 @@ def test_configuration_rejects_url_credentials():
     config = Settings(KEYCLOAK_DEV_ACCESS_TOKEN="DO_NOT_RETURN")
     assert isinstance(config.KEYCLOAK_DEV_ACCESS_TOKEN, SecretStr)
     assert "DO_NOT_RETURN" not in repr(config)
+
+
+@pytest.mark.parametrize(
+    "tool", keycloak_tools.KEYCLOAK_TOOLS, ids=lambda tool: tool.__name__
+)
+def test_tool_descriptions_pass_strict_gateway_filters(tool):
+    """Gateways such as ContextForge can be set to refuse descriptions with shell syntax."""
+    # A stricter TOOL_DESCRIPTION_FORBIDDEN_PATTERNS than ContextForge's default.
+    for pattern in ("&&", ";", "||", "$(", "> ", "< ", "`"):
+        assert pattern not in tool.__doc__, f"{pattern!r} in {tool.__name__}"

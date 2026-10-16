@@ -198,7 +198,7 @@ async def test_concurrent_calls_share_one_sign_in(keycloak):
 async def test_stdio_tools_call_admin_api_with_the_signed_in_token(monkeypatch):
     config = Settings(
         MCP_TRANSPORT_PROTOCOL="stdio",
-        ENABLE_AUTH=True,  # Ignored in stdio mode: there is no HTTP OAuth proxy.
+        ENABLE_AUTH=True,  # Ignored in stdio mode: there is no HTTP sign-in.
         KEYCLOAK_SERVER_URL="https://keycloak.example/",
         KEYCLOAK_REALM="myrealm",
         KEYCLOAK_OAUTH_CLIENT_ID="keycloak-mcp",

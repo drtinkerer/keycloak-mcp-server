@@ -1,4 +1,4 @@
-"""FastAPI host for the Keycloak MCP server and FastMCP-managed browser OAuth."""
+"""FastAPI host for the Keycloak MCP server with stateless Keycloak auth."""
 
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -14,7 +14,7 @@ from keycloak_mcp_server.src.settings import Settings, settings
 
 
 def create_app(config: Settings) -> FastAPI:
-    """Build one application with matching MCP, OAuth, and lifecycle settings."""
+    """Build one application with matching MCP, auth, and lifecycle settings."""
     auth = create_keycloak_auth(config)
     server = KeycloakMCPServer(auth=auth)
     if config.MCP_TRANSPORT_PROTOCOL == "sse":
@@ -43,12 +43,10 @@ def create_app(config: Settings) -> FastAPI:
                 "service": "keycloak-mcp-server",
                 "transport_protocol": config.MCP_TRANSPORT_PROTOCOL,
                 "version": __version__,
-                "authentication": "oauth" if auth else "disabled",
+                "authentication": "keycloak" if auth else "disabled",
             }
         )
 
-    # The mounted FastMCP application owns OAuth discovery, registration, consent,
-    # callback, token issuance/renewal, and per-request authentication.
     app.mount("/", mcp_app)
     if config.CORS_ENABLED:
         app.add_middleware(

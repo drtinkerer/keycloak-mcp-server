@@ -39,10 +39,11 @@ jobs:
       uses: docker/metadata-action@v6
       with:
         images: ${{ env.IMAGE }}
-        # main -> edge + sha-<short>; release v0.1.1 -> 0.1.1, 0.1, latest
+        # main -> edge + sha-<short>; release v0.1.1 -> 0.1.1, 0.1, latest;
+        # manual run on a branch -> sha-<short> (pin this one to test before merging)
         tags: |
           type=edge,branch=main
-          type=sha,enable=${{ github.event_name == 'push' }}
+          type=sha,enable=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=raw,value=latest,enable=${{ github.event_name == 'release' }}

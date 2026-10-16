@@ -12,7 +12,6 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY keycloak_mcp_server /app/keycloak_mcp_server
 RUN uv sync --locked --no-dev --no-editable \
-    && mkdir -p /app/.keycloak-oauth \
     && chown -R 1001:0 /app \
     && chmod -R g=u /app
 USER default

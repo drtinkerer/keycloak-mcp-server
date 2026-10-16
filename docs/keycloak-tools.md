@@ -57,11 +57,12 @@ Discovery needs no Keycloak configuration while MCP authentication is disabled. 
 return a clear configuration/authentication error until a real target and token are
 provided; the server does not fall back to fabricated data or a shared admin login.
 
-## Browser OAuth and live tool testing
+## Browser sign-in and live tool testing
 
 Configure the public PKCE `keycloak-mcp` client and server as described in the
-[authentication guide](authentication.md). The MCP client opens a browser and
-signs in as the user. Each request uses that user’s validated Keycloak access token.
+[authentication guide](authentication.md). The direct client signs in to Keycloak
+with that client on callback port 9876 (`--client-id`, `--callback-port`), so register
+`http://localhost:9876/*` as a redirect URI. Each request uses that user’s validated Keycloak access token.
 Target URL, realm, and client credentials are server settings, not tool arguments.
 
 ```bash
@@ -108,7 +109,7 @@ elevate privileges, fabricate data, or switch to service-account credentials.
 
 - `src/tools/keycloak_tools.py`: tool schemas, bounded pagination, and selected fields.
 - `src/keycloak_api/service.py`: asynchronous SDK requests and sanitized errors.
-- `src/keycloak_api/auth.py`: OAuth proxy, encrypted storage, and upstream token verification.
+- `src/keycloak_api/auth.py`: stateless Keycloak token verification and gateway token exchange.
 - `src/api.py`: FastMCP HTTP application, OAuth routes, and lifespan.
 - `tests/test_keycloak.py`: MCP calls and simulated Admin API responses.
 - `tests/test_keycloak_oauth.py`: real proxy flow with simulated Keycloak OAuth endpoints.

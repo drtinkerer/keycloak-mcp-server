@@ -150,8 +150,8 @@ async def get_keycloak_service() -> AsyncIterator[KeycloakService]:
             raise ToolError(
                 "Sign in through your MCP client before calling Keycloak tools."
             )
-        # OAuthProxy has already validated the MCP token and resolved it to the
-        # stored, verified Keycloak token. Never forward the inbound MCP bearer token.
+        # KeycloakTokenVerifier has checked this Keycloak access token: realm
+        # signature, issuer, audience, azp and expiry. It is sent on as the user.
         token = access.token
     else:
         token = _user_access_token.get()

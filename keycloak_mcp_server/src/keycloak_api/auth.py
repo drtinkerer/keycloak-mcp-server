@@ -1,20 +1,24 @@
-"""Browser OAuth for MCP clients, with separate MCP and Keycloak user tokens."""
+"""Stateless auth: Keycloak signs users in; this server only validates their tokens.
+
+The MCP server is an OAuth resource server. It publishes RFC 9728 protected
+resource metadata naming the Keycloak realm as the authorization server, so MCP
+clients sign the user in to Keycloak directly (browser, PKCE) and send the
+Keycloak access token. Tokens are checked against the realm's JWKS on every
+request; nothing is stored, so any number of replicas can serve the same users.
+"""
 
 import ssl
 import time
-from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import httpx2
-from authlib.integrations.httpx_client import AsyncOAuth2Client
-from cryptography.fernet import Fernet
-from fastmcp.server.auth import AccessToken, MultiAuth, OAuthProxy
-from fastmcp.server.auth.jwt_issuer import derive_jwt_key
+from fastmcp.server.auth import AccessToken, MultiAuth
 from fastmcp.server.auth.providers.jwt import JWTVerifier
-from key_value.aio.stores.filetree import FileTreeStore
-from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+from fastmcp.server.auth.providers.keycloak import KeycloakAuthProvider
 
 from keycloak_mcp_server.src.settings import Settings
+
+LOCALHOST = {"localhost", "127.0.0.1", "::1"}
 
 
 class KeycloakTokenVerifier(JWTVerifier):
@@ -24,9 +28,10 @@ class KeycloakTokenVerifier(JWTVerifier):
         """Configure JWT verification and the clients allowed as `azp`.
 
         `azp` is the client that requested the token. For browser sign-in it
-        is this server's own Keycloak client. After an RFC 8693 token
-        exchange it is the exchanging client (e.g. a gateway acting on behalf
-        of the user), not the audience the exchange targeted.
+        is the client MCP clients sign in with (KEYCLOAK_OAUTH_CLIENT_ID).
+        After an RFC 8693 token exchange it is the exchanging client (e.g. a
+        gateway acting on behalf of the user), not the audience the exchange
+        targeted.
         """
         super().__init__(**kwargs)
         self.allowed_azp = allowed_azp
@@ -39,7 +44,8 @@ class KeycloakTokenVerifier(JWTVerifier):
         claims = verified.claims
         now = time.time()
         # JWTVerifier checks signature, issuer, audience and scopes. Require the
-        # Keycloak access-token claims too; an ID token is never an Admin API token.
+        # Keycloak access-token claims too; an ID token is never an Admin API token,
+        # and a token from any other client of the realm is not accepted.
         if (
             claims.get("azp") not in self.allowed_azp
             or claims.get("typ") != "Bearer"
@@ -56,37 +62,13 @@ class KeycloakTokenVerifier(JWTVerifier):
         return verified
 
 
-class KeycloakOAuthProxy(OAuthProxy):
-    """Use the same trusted CA and timeout for OAuth and Admin API requests."""
+class KeycloakResourceServer(KeycloakAuthProvider):
+    """Keycloak as the authorization server, with a CA-aware JWKS client."""
 
-    def __init__(
-        self,
-        *,
-        verify: ssl.SSLContext,
-        timeout: int,
-        verification_client: httpx2.AsyncClient,
-        **kwargs,
-    ):
-        """Configure shared TLS trust and the upstream token-verification client."""
-        self.keycloak_verify = verify
-        self.keycloak_timeout = timeout
-        self.verification_client = verification_client
+    def __init__(self, *, verification_client: httpx2.AsyncClient, **kwargs):
+        """Keep the shared JWKS HTTP client so it can be closed on shutdown."""
         super().__init__(**kwargs)
-
-    def _create_upstream_oauth_client(self) -> AsyncOAuth2Client:
-        return AsyncOAuth2Client(
-            client_id=self._upstream_client_id,
-            client_secret=(
-                self._upstream_client_secret.get_secret_value()
-                if self._upstream_client_secret is not None
-                else None
-            ),
-            token_endpoint_auth_method=(
-                "client_secret_basic" if self._upstream_client_secret else "none"
-            ),
-            timeout=self.keycloak_timeout,
-            verify=self.keycloak_verify,
-        )
+        self.verification_client = verification_client
 
     async def aclose(self) -> None:
         """Release the HTTP connection pool used for JWKS verification."""
@@ -94,62 +76,51 @@ class KeycloakOAuthProxy(OAuthProxy):
 
 
 class KeycloakMultiAuth(MultiAuth):
-    """The OAuth proxy plus direct verification of token-exchanged tokens."""
+    """Browser sign-in tokens plus directly verified token-exchanged tokens."""
 
-    def __init__(self, *, proxy: KeycloakOAuthProxy, exchange: KeycloakTokenVerifier):
-        """Try the proxy's own tokens first, then exchanged Keycloak tokens."""
+    def __init__(
+        self, *, provider: KeycloakResourceServer, exchange: KeycloakTokenVerifier
+    ):
+        """Try sign-in tokens first, then tokens exchanged by a trusted gateway."""
         super().__init__(
-            server=proxy,
-            server_source_id="keycloak-oauth-proxy",
+            server=provider,
+            server_source_id="keycloak-sign-in",
             verifiers={"keycloak-token-exchange": exchange},
-            # The proxy path already requires `openid` in its upstream token
-            # check. An exchanged token carries the scopes requested in the
-            # exchange instead, so the shared request-level check is cleared.
+            # The sign-in verifier requires `openid` itself. An exchanged token
+            # carries the scopes requested in the exchange instead, so the
+            # shared request-level check is cleared.
             required_scopes=[],
         )
-        self.proxy = proxy
+        self.provider = provider
 
     async def aclose(self) -> None:
         """Release the shared JWKS HTTP client."""
-        await self.proxy.aclose()
+        await self.provider.aclose()
 
 
 def create_keycloak_auth(
     config: Settings,
-) -> KeycloakOAuthProxy | KeycloakMultiAuth | None:
-    """Build auth for a configured Keycloak realm; disabled auth has no routes.
+) -> KeycloakResourceServer | KeycloakMultiAuth | None:
+    """Build stateless auth for a configured Keycloak realm; disabled auth has no routes.
 
-    Browser sign-in always goes through the OAuth proxy. When
+    MCP clients sign in to Keycloak with KEYCLOAK_OAUTH_CLIENT_ID. When
     KEYCLOAK_TRUSTED_EXCHANGERS is set, Keycloak access tokens that one of
     those clients obtained by RFC 8693 token exchange for this server's
-    audience are also accepted directly.
+    audience are also accepted.
     """
     if not config.ENABLE_AUTH:
         return None
-    required = (
-        "KEYCLOAK_SERVER_URL",
-        "KEYCLOAK_REALM",
-        "KEYCLOAK_OAUTH_CLIENT_ID",
-        "KEYCLOAK_OAUTH_SIGNING_KEY",
-    )
+    required = ("KEYCLOAK_SERVER_URL", "KEYCLOAK_REALM", "KEYCLOAK_OAUTH_CLIENT_ID")
     missing = [name for name in required if not getattr(config, name)]
     if missing:
-        raise ValueError("Browser OAuth requires: " + ", ".join(missing))
-    assert config.KEYCLOAK_OAUTH_SIGNING_KEY is not None
+        raise ValueError("Keycloak sign-in requires: " + ", ".join(missing))
     if config.KEYCLOAK_DEV_ACCESS_TOKEN:
         raise ValueError(
-            "Remove KEYCLOAK_DEV_ACCESS_TOKEN when enabling browser OAuth."
+            "Remove KEYCLOAK_DEV_ACCESS_TOKEN when enabling Keycloak sign-in."
         )
-    signing_key = config.KEYCLOAK_OAUTH_SIGNING_KEY.get_secret_value()
-    if len(signing_key) < 32:
-        raise ValueError(
-            "KEYCLOAK_OAUTH_SIGNING_KEY must contain at least 32 characters."
-        )
-    scopes = config.KEYCLOAK_OAUTH_SCOPES.split()
-    if "openid" not in scopes or not config.KEYCLOAK_OAUTH_AUDIENCE:
-        raise ValueError(
-            "Browser OAuth requires the openid scope and KEYCLOAK_OAUTH_AUDIENCE."
-        )
+    if not config.KEYCLOAK_OAUTH_AUDIENCE:
+        # Without an audience any token of the realm would be accepted.
+        raise ValueError("Keycloak sign-in requires KEYCLOAK_OAUTH_AUDIENCE.")
     base = config.MCP_HOST_ENDPOINT.rstrip("/")
     parsed = urlparse(base)
     if (
@@ -160,97 +131,55 @@ def create_keycloak_auth(
         or parsed.query
         or parsed.fragment
         or parsed.path not in {"", "/"}
-        or (
-            parsed.scheme == "http"
-            and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
-        )
+        or (parsed.scheme == "http" and parsed.hostname not in LOCALHOST)
     ):
         raise ValueError(
             "MCP_HOST_ENDPOINT must be an HTTPS origin, or HTTP localhost for development."
         )
     upstream = str(config.KEYCLOAK_SERVER_URL).rstrip("/")
     target = urlparse(upstream)
-    if target.scheme != "https" and target.hostname not in {
-        "localhost",
-        "127.0.0.1",
-        "::1",
-    }:
+    if target.scheme != "https" and target.hostname not in LOCALHOST:
         raise ValueError(
             "KEYCLOAK_SERVER_URL must use HTTPS except for a localhost test instance."
         )
-    if not config.KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS:
-        raise ValueError("Configure at least one allowed MCP client redirect URI.")
     exchangers = frozenset(config.KEYCLOAK_TRUSTED_EXCHANGERS)
     if any(not exchanger or exchanger.strip() != exchanger for exchanger in exchangers):
         raise ValueError("KEYCLOAK_TRUSTED_EXCHANGERS entries must be client IDs.")
     if config.KEYCLOAK_OAUTH_CLIENT_ID in exchangers:
-        # Otherwise a plain sign-in token for this client could skip the proxy.
+        # Keep the two paths apart: sign-in tokens must carry `openid`.
         raise ValueError(
             "KEYCLOAK_TRUSTED_EXCHANGERS must not include KEYCLOAK_OAUTH_CLIENT_ID."
         )
     issuer = upstream + "/realms/" + quote(config.KEYCLOAK_REALM, safe="")
-    oidc = issuer + "/protocol/openid-connect"
+    jwks_uri = issuer + "/protocol/openid-connect/certs"
+    # The built-in verifier would fetch JWKS with default trust; share one
+    # client that honours KEYCLOAK_CA_BUNDLE across both paths instead.
     verify = ssl.create_default_context(cafile=config.KEYCLOAK_CA_BUNDLE)
     verification_client = httpx2.AsyncClient(
         verify=verify, timeout=config.KEYCLOAK_TIMEOUT
     )
-    verifier = KeycloakTokenVerifier(
-        allowed_azp=frozenset({config.KEYCLOAK_OAUTH_CLIENT_ID}),
-        jwks_uri=oidc + "/certs",
-        issuer=issuer,
-        audience=config.KEYCLOAK_OAUTH_AUDIENCE,
-        algorithm="RS256",
-        required_scopes=["openid"],
-        http_client=verification_client,
-    )
-    directory = Path(config.KEYCLOAK_OAUTH_STORAGE_DIR).expanduser().resolve()
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    directory.chmod(0o700)
-    encryption_key = derive_jwt_key(
-        high_entropy_material=signing_key,
-        salt=f"keycloak-oauth-storage:{base}:{config.KEYCLOAK_OAUTH_CLIENT_ID}",
-    )
-    storage = FernetEncryptionWrapper(
-        key_value=FileTreeStore(data_directory=directory),
-        fernet=Fernet(encryption_key),
-    )
-    proxy = KeycloakOAuthProxy(
-        upstream_authorization_endpoint=oidc + "/auth",
-        upstream_token_endpoint=oidc + "/token",
-        upstream_client_id=config.KEYCLOAK_OAUTH_CLIENT_ID,
-        upstream_client_secret=(
-            config.KEYCLOAK_OAUTH_CLIENT_SECRET.get_secret_value()
-            if config.KEYCLOAK_OAUTH_CLIENT_SECRET
-            else None
-        ),
-        token_verifier=verifier,
+    provider = KeycloakResourceServer(
+        realm_url=issuer,
         base_url=base,
-        redirect_path="/auth/callback",
-        allowed_client_redirect_uris=config.KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS,
-        valid_scopes=scopes,
-        forward_pkce=True,
-        # Keycloak uses configured audience mappers. The local MCP resource URL
-        # is validated by the proxy and is not an upstream Keycloak resource.
-        forward_resource=False,
-        token_endpoint_auth_method=(
-            "client_secret_basic" if config.KEYCLOAK_OAUTH_CLIENT_SECRET else "none"
+        token_verifier=KeycloakTokenVerifier(
+            allowed_azp=frozenset({config.KEYCLOAK_OAUTH_CLIENT_ID}),
+            jwks_uri=jwks_uri,
+            issuer=issuer,
+            audience=config.KEYCLOAK_OAUTH_AUDIENCE,
+            algorithm="RS256",
+            required_scopes=["openid"],
+            http_client=verification_client,
         ),
-        client_storage=storage,
-        jwt_signing_key=signing_key,
-        require_authorization_consent=True,
-        enable_cimd=False,
-        verify=verify,
-        timeout=config.KEYCLOAK_TIMEOUT,
         verification_client=verification_client,
     )
     if not exchangers:
-        return proxy
+        return provider
     exchange = KeycloakTokenVerifier(
         allowed_azp=exchangers,
-        jwks_uri=oidc + "/certs",
+        jwks_uri=jwks_uri,
         issuer=issuer,
         audience=config.KEYCLOAK_OAUTH_AUDIENCE,
         algorithm="RS256",
         http_client=verification_client,
     )
-    return KeycloakMultiAuth(proxy=proxy, exchange=exchange)
+    return KeycloakMultiAuth(provider=provider, exchange=exchange)

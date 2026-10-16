@@ -34,19 +34,16 @@ class Settings(BaseSettings):
     KEYCLOAK_TIMEOUT: int = Field(default=30, ge=1, le=60)
     KEYCLOAK_CA_BUNDLE: Optional[str] = None
     KEYCLOAK_DEV_ACCESS_TOKEN: Optional[SecretStr] = None
+    # The public Keycloak client users sign in with (the `azp` of accepted
+    # sign-in tokens). MCP clients use it directly in HTTP mode, as does the
+    # server itself in stdio mode.
     KEYCLOAK_OAUTH_CLIENT_ID: str = ""
-    KEYCLOAK_OAUTH_CLIENT_SECRET: Optional[SecretStr] = None
-    KEYCLOAK_OAUTH_SIGNING_KEY: Optional[SecretStr] = None
     KEYCLOAK_OAUTH_AUDIENCE: str = "keycloak-mcp"
     # HTTP mode: Keycloak clients (e.g. an MCP gateway) whose RFC 8693
-    # exchanged tokens for KEYCLOAK_OAUTH_AUDIENCE are accepted directly, next
-    # to the OAuth proxy. JSON array, e.g. ["mcp-context-forge"]. Empty: off.
+    # exchanged tokens for KEYCLOAK_OAUTH_AUDIENCE are accepted directly.
+    # JSON array, e.g. ["mcp-context-forge"]. Empty: off.
     KEYCLOAK_TRUSTED_EXCHANGERS: List[str] = Field(default_factory=list)
     KEYCLOAK_OAUTH_SCOPES: str = "openid profile email"
-    KEYCLOAK_OAUTH_STORAGE_DIR: str = ".keycloak-oauth"
-    KEYCLOAK_OAUTH_CLIENT_REDIRECT_URIS: List[str] = Field(
-        default_factory=lambda: ["http://localhost:*/*", "http://127.0.0.1:*/*"]
-    )
     # stdio mode: the server signs the user in itself via this loopback callback.
     KEYCLOAK_LOGIN_PORT: int = Field(default=8250, ge=1024, le=65535)
     KEYCLOAK_TOKEN_CACHE_DIR: str = "~/.cache/keycloak-mcp-server"

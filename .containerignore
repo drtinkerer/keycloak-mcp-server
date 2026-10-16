@@ -33,7 +33,6 @@ Thumbs.db
 # Local environment, credentials, and OAuth state
 .env
 .venv/
-.keycloak-oauth/
 
 # Test files (optional - remove if you want tests in container)
 tests/

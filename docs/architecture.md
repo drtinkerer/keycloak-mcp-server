@@ -176,7 +176,7 @@ keycloak-mcp-server/
 │   │   ├── assets/               # Static resource files (none yet)
 │   │   ├── keycloak_api/         # Keycloak integration
 │   │   │   ├── __init__.py
-│   │   │   ├── auth.py           # OAuth proxy and per-user token verification
+│   │   │   ├── auth.py           # Stateless Keycloak token verification
 │   │   │   └── service.py        # Request-scoped Admin API connections
 │   │   └── tools/                # MCP tool implementations
 │   │       ├── __init__.py
@@ -192,11 +192,11 @@ keycloak-mcp-server/
 │   ├── test_mcp.py              # MCP server tests
 │   ├── test_settings.py         # Configuration tests
 │   ├── test_keycloak.py         # Tools against simulated Admin API responses
-│   ├── test_keycloak_oauth.py   # Full OAuth proxy flow against simulated Keycloak
+│   ├── test_keycloak_oauth.py   # Signed-token auth against simulated Keycloak
 │   └── test_utils.py            # Utility tests
 ├── examples/                     # Client examples
 │   ├── fastmcp_client.py        # FastMCP client example
-│   ├── keycloak_client.py       # Direct smoke test, with optional browser OAuth
+│   ├── keycloak_client.py       # Direct smoke test, with optional browser sign-in
 │   └── langgraph_client.py      # LangGraph client example
 ├── deployment/                   # Deployment configurations
 │   └── openshift/               # OpenShift manifests
@@ -225,7 +225,7 @@ keycloak-mcp-server/
 - **`settings.py`**: Environment-based configuration using Pydantic BaseSettings with validation
 - **`tools/keycloak_tools.py`**: Read-only Keycloak tool schemas, pagination, and selected response fields
 - **`keycloak_api/service.py`**: Request-scoped user tokens and asynchronous Admin API GET requests
-- **`keycloak_api/auth.py`**: FastMCP OAuth proxy, per-user token verification, and encrypted local OAuth storage (see [Authentication Guide](authentication.md))
+- **`keycloak_api/auth.py`**: RFC 9728 resource server: verifies each request's Keycloak access token (JWKS, issuer, audience, `azp`) and accepts gateway-exchanged tokens; stores nothing (see [Authentication Guide](authentication.md))
 - **`utils/pylogger.py`**: Structured JSON logging using structlog with comprehensive processors
 
 ## Current MCP Tools
@@ -236,7 +236,7 @@ See [Keycloak tools](keycloak-tools.md) for configuration, response fields, and 
 
 ## HTTP Endpoints
 
-The FastAPI application (`api.py`) exposes the following HTTP routes. OAuth routes are registered conditionally when `ENABLE_AUTH=True`.
+The FastAPI application (`api.py`) exposes the following HTTP routes. The protected resource metadata is registered only when `ENABLE_AUTH=True`.
 
 ### Core Routes
 
@@ -244,23 +244,12 @@ The FastAPI application (`api.py`) exposes the following HTTP routes. OAuth rout
 |--------|------|-------------|
 | `GET` | `/health` | Health check — returns `{"status": "healthy"}` |
 | `POST` | `/mcp` | MCP JSON-RPC endpoint (tools/list, tools/call, etc.) |
-| `GET` | `/.well-known/oauth-protected-resource` | RFC 8414 resource server metadata (auth only) |
-| `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 authorization server metadata (auth only) |
+| `GET` | `/.well-known/oauth-protected-resource/mcp` | RFC 9728 protected resource metadata naming the Keycloak realm (auth only) |
 
-### OAuth Routes
-
-FastMCP registers these routes when `ENABLE_AUTH=True`:
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/authorize` | Start the authorization code flow |
-| `GET`, `POST` | `/consent` | Approve the MCP connection |
-| `GET` | `/auth/callback` | Keycloak authorization-code callback |
-| `POST` | `/token` | Issue or refresh MCP tokens |
-| `POST` | `/register` | Dynamic MCP client registration |
-
-The MCP endpoint requires authentication for both discovery and calls when OAuth
-is enabled. `/health` and OAuth discovery/registration remain public.
+There are no authorization, token, callback or registration routes: MCP clients
+sign users in at Keycloak itself. The MCP endpoint requires a Keycloak access token
+for both discovery and calls when `ENABLE_AUTH=True`. `/health` and the protected
+resource metadata remain public.
 
 ## Error Handling
 
@@ -269,8 +258,7 @@ The server uses a layered error handling strategy:
 | Layer | Mechanism | Example |
 |-------|-----------|---------|
 | **Startup** | `main.py` validates settings and catches `SystemExit`, `KeyboardInterrupt`, and unexpected exceptions before the event loop starts | Missing required env var → logged + exit(1) |
-| **Middleware** | FastMCP verifies MCP tokens and associated Keycloak user tokens, rejecting invalid or missing credentials | Expired bearer token → `{"detail": "Unauthorized"}` |
+| **Middleware** | FastMCP verifies each Keycloak access token against the realm's JWKS, rejecting invalid or missing credentials with `401` and the metadata URL | Expired bearer token → `401` |
 | **Health** | `/health` returns `200` with `{"status": "healthy"}` — no auth required | Used by container probes and load balancers |
 | **Tool-level** | Each MCP tool validates its own inputs (type checks, value ranges) and raises descriptive errors that the MCP protocol returns to the client | `search_users` with `max_results=101` → error message in MCP response |
-| **OAuth** | FastMCP’s OAuth proxy handles provider errors and return appropriate OAuth error responses (`invalid_grant`, `invalid_client`, etc.) | Bad authorization code → `{"error": "invalid_grant"}` |
 | **Logging** | All layers log via structlog with JSON output, including request IDs and error context | Structured `error` level entries with stack traces |
