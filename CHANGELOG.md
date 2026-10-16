@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 This project uses [GitHub Releases](https://github.com/drtinkerer/keycloak-mcp-server/releases) for detailed changelogs. Release notes are auto-generated from merged pull request titles and labels.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-16
 
 ### Changed
 
